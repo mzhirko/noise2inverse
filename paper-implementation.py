@@ -4,19 +4,11 @@
 # Description:
 # This script provides a foundational framework for the project "Impact of Network Architecture on Noise2Inverse".
 # Updates:
-# - Integrated 3D phantom generation logic (takes a 2D slice for current 2D pipeline).
-# - Added fine-scale details to the 3D phantom.
-# - Implemented argparse for modular execution.
-#
-# It includes:
-# 1. 3D human-like phantom generation (outputs a 2D slice for simulation).
-# 2. CT simulation (projection, noise, FBP reconstruction) using scikit-image.
-# 3. Basic PyTorch implementations of U-Net and DnCNN (2D).
-# 4. Conceptual structure for Noise2Inverse data loading and training.
-# 5. Evaluation metrics (PSNR, SSIM).
-#
-# This code is a starting point and requires significant expansion and adaptation
-# for the full research project, especially for full 3D CT simulation and 3D models.
+# - Phantom generation: Increased density, variety, and added "foam-like" regions.
+# - Plotting: Added combined loss plot for U-Net & DnCNN.
+# - Evaluation plot enhanced to 3x2 layout (GT, Noisy, Denoised versions, Residuals).
+# - All plots saved to 'plots/' directory.
+# - Retained improvements for denoising (epochs, batch size, N2I inference).
 
 import numpy as np
 import torch
@@ -26,27 +18,26 @@ from torch.utils.data import Dataset, DataLoader
 from skimage.transform import radon, iradon, resize
 from skimage.metrics import peak_signal_noise_ratio as psnr
 from skimage.metrics import structural_similarity as ssim
-# from skimage.draw import disk # Replaced by 3D drawing
+from skimage.draw import ellipse, rectangle, polygon, disk # Added disk for foam
 import matplotlib.pyplot as plt
 import random
-import argparse # Added for command-line arguments
-import os # For saving/loading data potentially
+import argparse
+import os
+from datetime import datetime
 
 # --- Configuration ---
-PHANTOM_SIZE_XY = 128  # Size of the 2D slice taken from 3D phantom
-PHANTOM_DEPTH_Z = 64   # Depth of the 3D phantom
-N_PROJECTIONS = 180 # Number of projection angles (reduced for faster demo)
-NOISE_TYPE = 'poisson' # 'gaussian' or 'poisson'
-NOISE_LEVEL_GAUSSIAN = 0.1 # Std dev for Gaussian noise
-NOISE_LEVEL_POISSON_LAM = 30 # Lambda for Poisson noise (related to photon count)
+PHANTOM_SIZE_XY = 128
+N_PROJECTIONS = 180
+NOISE_TYPE = 'poisson'
+NOISE_LEVEL_GAUSSIAN = 0.1
+NOISE_LEVEL_POISSON_LAM = 30
 MODEL_INPUT_CHANNELS = 1
 MODEL_OUTPUT_CHANNELS = 1
 LEARNING_RATE = 1e-4
-NUM_EPOCHS = 10 # Reduced for faster demo; As per plan, keep fixed for comparison (adjust as needed)
-BATCH_SIZE = 2 # Reduced for faster demo
-K_SPLITS_NOISE2INVERSE = 2 # Number of splits for Noise2Inverse data (e.g., 2 or 4)
+NUM_EPOCHS = 50
+BATCH_SIZE = 4
+K_SPLITS_NOISE2INVERSE = 2
 
-# Set random seed for reproducibility
 SEED = 42
 random.seed(SEED)
 np.random.seed(SEED)
@@ -59,141 +50,102 @@ if torch.cuda.is_available():
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {DEVICE}")
 
-# --- 1. 3D Phantom Generation ---
+PLOT_SAVE_DIR = "plots"
+os.makedirs(PLOT_SAVE_DIR, exist_ok=True)
 
-def create_voxel_sphere(center_x, center_y, center_z, radius, array_shape, value=1.0):
-    """Creates a sphere in a 3D numpy array."""
-    x, y, z = np.ogrid[:array_shape[0], :array_shape[1], :array_shape[2]]
-    mask = (x - center_x)**2 + (y - center_y)**2 + (z - center_z)**2 <= radius**2
-    return mask, value
+# Global dictionary to store losses for combined plot
+training_losses_history = {}
 
-def create_voxel_ellipsoid(center_x, center_y, center_z, rx, ry, rz, array_shape, value=1.0):
-    """Creates an ellipsoid in a 3D numpy array."""
-    x, y, z = np.ogrid[:array_shape[0], :array_shape[1], :array_shape[2]]
-    mask = ((x - center_x)/rx)**2 + ((y - center_y)/ry)**2 + ((z - center_z)/rz)**2 <= 1
-    return mask, value
+def save_current_plot(figure, filename_prefix): # Modified to take figure object
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = os.path.join(PLOT_SAVE_DIR, f"{filename_prefix}_{timestamp}.png")
+    figure.savefig(filename)
+    print(f"Plot saved to {filename}")
+    # plt.close(figure) # Close the figure after saving to free memory, if not shown.
+    # plt.show() # If you still want to show interactively.
 
-def create_voxel_cuboid(center_x, center_y, center_z, sx, sy, sz, array_shape, value=1.0):
-    """Creates a cuboid in a 3D numpy array."""
-    x0, x1 = center_x - sx//2, center_x + sx//2
-    y0, y1 = center_y - sy//2, center_y + sy//2
-    z0, z1 = center_z - sz//2, center_z + sz//2
-    mask = np.zeros(array_shape, dtype=bool)
-    mask[int(x0):int(x1), int(y0):int(y1), int(z0):int(z1)] = True
-    return mask, value
-
-def add_fine_scale_details(phantom_array, num_features=10, max_size=3, value_range=(1.5, 2.0)):
-    """Adds small, high-contrast features (spheres) within existing structures."""
-    shape = phantom_array.shape
-    # Add features only where phantom already has some structure (e.g., > 0.1)
-    existing_structure_indices = np.argwhere(phantom_array > 0.1)
-    if len(existing_structure_indices) == 0:
-        print("Warning: No existing structures found to add fine details to.")
-        return phantom_array
-
-    for _ in range(num_features):
-        # Pick a random location within an existing structure
-        rand_idx = random.choice(existing_structure_indices)
-        center_x, center_y, center_z = rand_idx[0], rand_idx[1], rand_idx[2]
+# --- 1. Dense & Varied 2D Phantom Generation ---
+def generate_dense_varied_2d_phantom(size=PHANTOM_SIZE_XY, num_regions=3, details_per_region=10, foam_elements=50):
+    phantom = np.zeros((size, size), dtype=np.float32)
+    
+    for _ in range(num_regions):
+        region_type = random.choice(['mixed_shapes', 'foam_area'])
+        # Define a bounding box for the current region
+        r_start = random.randint(0, size // 2)
+        c_start = random.randint(0, size // 2)
+        r_end = random.randint(r_start + size // 4, size -1)
+        c_end = random.randint(c_start + size // 4, size -1)
         
-        radius = random.uniform(1, max_size)
-        value = random.uniform(value_range[0], value_range[1])
+        region_value_base = random.uniform(0.2, 0.6)
+
+        if region_type == 'mixed_shapes':
+            for _ in range(details_per_region):
+                shape_type = random.choice(['ellipse', 'rectangle', 'polygon'])
+                value = region_value_base + random.uniform(0.1, 0.4)
+                
+                # Confine shapes to the current region
+                r_c = random.randint(r_start, r_end)
+                c_c = random.randint(c_start, c_end)
+                
+                if shape_type == 'ellipse':
+                    r_rad = random.randint(max(1,size // 32), size // 10)
+                    c_rad = random.randint(max(1,size // 32), size // 10)
+                    orientation = random.uniform(0, np.pi)
+                    rr, cc = ellipse(r_c, c_c, r_rad, c_rad, shape=(size, size), rotation=orientation)
+                    phantom[rr, cc] = value
+                elif shape_type == 'rectangle':
+                    width = random.randint(size // 20, size // 8)
+                    height = random.randint(size // 20, size // 8)
+                    s_r, s_c = max(0, r_c - height//2), max(0, c_c - width//2)
+                    e_r, e_c = min(size-1, s_r + height), min(size-1, s_c + width)
+                    if e_r > s_r and e_c > s_c:
+                         rr, cc = rectangle((s_r, s_c), end=(e_r, e_c), shape=(size, size))
+                         phantom[rr, cc] = value
+                elif shape_type == 'polygon':
+                    num_v = random.randint(3,5)
+                    verts_r = np.clip(r_c + np.random.randint(-size//10, size//10, num_v), 0, size-1)
+                    verts_c = np.clip(c_c + np.random.randint(-size//10, size//10, num_v), 0, size-1)
+                    if len(verts_r) >=3 :
+                        try: # skimage polygon can fail for degenerate cases
+                            rr, cc = polygon(verts_r, verts_c, shape=(size,size))
+                            phantom[rr,cc] = value
+                        except: pass # Skip if polygon is invalid
         
-        # Ensure feature is within bounds
-        if (center_x - radius < 0 or center_x + radius >= shape[0] or
-            center_y - radius < 0 or center_y + radius >= shape[1] or
-            center_z - radius < 0 or center_z + radius >= shape[2]):
-            continue
+        elif region_type == 'foam_area':
+            # Create a background for the foam region first
+            rr_foam_bg, cc_foam_bg = rectangle((r_start, c_start), end=(r_end, c_end), shape=(size,size))
+            phantom[rr_foam_bg, cc_foam_bg] = np.maximum(phantom[rr_foam_bg, cc_foam_bg], region_value_base * 0.5) # Ensure base
 
-        mask, val = create_voxel_sphere(center_x, center_y, center_z, radius, shape, value)
-        phantom_array[mask] = val # Add or overwrite with higher value
-    return phantom_array
+            for _ in range(foam_elements):
+                # Small, potentially overlapping disks (bubbles)
+                r_foam = random.randint(r_start, r_end)
+                c_foam = random.randint(c_start, c_end)
+                rad_foam = random.randint(max(1,size // 64), size // 20)
+                val_foam = region_value_base + random.uniform(-0.2, 0.2) # Voids or denser spots
+                rr, cc = disk((r_foam, c_foam), rad_foam, shape=(size,size))
+                phantom[rr,cc] = np.clip(val_foam, 0, 1.5) # Allow some brighter spots
 
+    # Add some global fine details (high contrast, small)
+    for _ in range(details_per_region * 2):
+        r_detail = random.randint(0, size-1)
+        c_detail = random.randint(0, size-1)
+        rad_detail = random.randint(1, max(2, size // 40))
+        val_detail = random.uniform(1.0, 1.5) # Higher contrast
+        rr, cc = disk((r_detail, c_detail), rad_detail, shape=(size,size))
+        phantom[rr,cc] = val_detail
+        
+    return np.clip(phantom, 0, 1.5)
 
-def generate_3d_human_phantom_array(xy_size=PHANTOM_SIZE_XY, z_depth=PHANTOM_DEPTH_Z):
-    """
-    Generates a 3D human-like phantom as a NumPy array.
-    Adapted from user-provided phantom.py, scaled to voxel space.
-    """
-    phantom = np.zeros((xy_size, xy_size, z_depth), dtype=np.float32)
-    
-    # Simplified proportions for voxel space
-    head_radius = xy_size // 8
-    head_center_x, head_center_y = xy_size // 2, xy_size // 2
-    head_center_z = z_depth - head_radius - z_depth // 20 # Place head towards the top
-
-    mask, val = create_voxel_sphere(head_center_x, head_center_y, head_center_z, head_radius, phantom.shape, value=0.7)
-    phantom[mask] = val
-
-    # Torso (ellipsoid)
-    torso_rx, torso_ry, torso_rz = xy_size // 5, xy_size // 7, z_depth // 3
-    torso_center_x, torso_center_y = xy_size // 2, xy_size // 2
-    torso_center_z = head_center_z - head_radius - torso_rz 
-    mask, val = create_voxel_ellipsoid(torso_center_x, torso_center_y, torso_center_z,
-                                       torso_rx, torso_ry, torso_rz, phantom.shape, value=0.5)
-    phantom[mask] = val
-    
-    # Limbs (cuboids) - very simplified
-    limb_width, limb_thickness = xy_size // 15, xy_size // 15
-    arm_length = z_depth // 3
-    leg_length = z_depth // 2.5
-
-    # Left Arm
-    mask, val = create_voxel_cuboid(xy_size // 2 - torso_rx - limb_width //2 , xy_size // 2, torso_center_z,
-                                    limb_width, limb_thickness, arm_length, phantom.shape, value=0.4)
-    phantom[mask] = val
-    # Right Arm
-    mask, val = create_voxel_cuboid(xy_size // 2 + torso_rx + limb_width //2, xy_size // 2, torso_center_z,
-                                    limb_width, limb_thickness, arm_length, phantom.shape, value=0.4)
-    phantom[mask] = val
-
-    # Add some internal structures (spheres of different densities)
-    internal_structures = [
-        (head_center_x, head_center_y, head_center_z, head_radius // 2, 0.9), # Brain-like
-        (torso_center_x + torso_rx//3, torso_center_y, torso_center_z, torso_ry // 3, 0.8), # Organ 1
-        (torso_center_x - torso_rx//3, torso_center_y, torso_center_z, torso_ry // 3, 0.85),# Organ 2
-    ]
-    for cx, cy, cz, rad, v_val in internal_structures:
-        # Ensure internal structures are within bounds and main shape
-        # This check is simplified; more robust checks would ensure they are fully contained.
-        if 0 < cx < xy_size and 0 < cy < xy_size and 0 < cz < z_depth:
-             mask, _ = create_voxel_sphere(cx, cy, cz, rad, phantom.shape, v_val)
-             phantom[mask] = v_val # Assign value
-
-    # Add fine-scale details
-    phantom = add_fine_scale_details(phantom, num_features=20, max_size=xy_size//32, value_range=(1.0, 1.5))
-
-    return phantom
-
-def get_2d_slice_from_3d_phantom(phantom_3d, slice_index=None):
-    """Extracts a 2D slice (e.g., central) from the 3D phantom."""
-    if slice_index is None:
-        slice_index = phantom_3d.shape[2] // 2 # Central slice along Z-axis
-    
-    phantom_2d = phantom_3d[:, :, slice_index].copy() # Take a copy
-    # Ensure the 2D slice has the target XY dimensions if different
-    if phantom_2d.shape[0] != PHANTOM_SIZE_XY or phantom_2d.shape[1] != PHANTOM_SIZE_XY:
-         phantom_2d = resize(phantom_2d, (PHANTOM_SIZE_XY, PHANTOM_SIZE_XY), anti_aliasing=True, mode='reflect')
-    return phantom_2d.astype(np.float32)
-
-
-# --- 2. CT Simulation ---
+# --- 2. CT Simulation --- (Unchanged)
 def simulate_projections(phantom_2d, n_projections=N_PROJECTIONS):
-    """
-    Simulates 2D parallel-beam projections (sinogram) from a 2D phantom slice.
-    """
     angles = np.linspace(0., 180., n_projections, endpoint=False)
     sinogram = radon(phantom_2d, theta=angles, circle=True)
     return sinogram, angles
 
 def add_noise(sinogram, noise_type='gaussian', noise_level_gaussian=0.1, noise_level_poisson_lam=30):
-    """
-    Adds Gaussian or Poisson noise to the sinogram.
-    """
     noisy_sinogram = sinogram.copy()
     max_sino_val = np.max(sinogram)
-    if max_sino_val == 0: max_sino_val = 1.0 # Avoid division by zero for empty sinograms
-
+    if max_sino_val == 0: max_sino_val = 1.0 
     if noise_type == 'gaussian':
         noise = np.random.normal(0, noise_level_gaussian * max_sino_val, sinogram.shape)
         noisy_sinogram += noise
@@ -203,26 +155,22 @@ def add_noise(sinogram, noise_type='gaussian', noise_level_gaussian=0.1, noise_l
         noisy_sinogram = (noisy_sinogram / noise_level_poisson_lam) * max_sino_val
     else:
         raise ValueError("Unknown noise type. Choose 'gaussian' or 'poisson'.")
-    return np.clip(noisy_sinogram, 0, None) # Clip negative values, no upper bound needed for Poisson typically
+    return np.clip(noisy_sinogram, 0, None)
 
 def reconstruct_fbp(sinogram, angles):
-    """
-    Reconstructs an image from a sinogram using Filtered Backprojection (FBP).
-    """
     reconstruction_fbp = iradon(sinogram, theta=angles, circle=True)
-    # Ensure output size matches PHANTOM_SIZE_XY
     if reconstruction_fbp.shape[0] != PHANTOM_SIZE_XY or reconstruction_fbp.shape[1] != PHANTOM_SIZE_XY:
         reconstruction_fbp = resize(reconstruction_fbp, (PHANTOM_SIZE_XY, PHANTOM_SIZE_XY), 
                                     anti_aliasing=True, mode='reflect')
     return reconstruction_fbp.astype(np.float32)
 
-# --- 3. CNN Architectures (PyTorch) --- unchanged from previous version ---
+# --- 3. CNN Architectures (PyTorch) --- (Unchanged)
 class UNet(nn.Module):
     def __init__(self, in_channels, out_channels):
         super(UNet, self).__init__()
         def CBR(in_feat, out_feat, kernel_size=3, stride=1, padding=1):
             return nn.Sequential(
-                nn.Conv2d(in_feat, out_feat, kernel_size, stride, padding, bias=False), # bias=False with BN
+                nn.Conv2d(in_feat, out_feat, kernel_size, stride, padding, bias=False),
                 nn.BatchNorm2d(out_feat),
                 nn.ReLU(inplace=True)
             )
@@ -272,9 +220,8 @@ class DnCNN(nn.Module):
     def forward(self, x):
         residual = self.dncnn(x)
         return x - residual
-# --- End of unchanged CNN Architectures ---
 
-# --- 4. Noise2Inverse Data Handling and Training (Conceptual) ---
+# --- 4. Noise2Inverse Data Handling and Training --- (Unchanged)
 class Noise2InverseDataset(Dataset):
     def __init__(self, list_of_noisy_sinograms, angles, k_splits=K_SPLITS_NOISE2INVERSE, strategy='X:1', recon_size=PHANTOM_SIZE_XY):
         self.list_of_noisy_sinograms = list_of_noisy_sinograms
@@ -289,13 +236,11 @@ class Noise2InverseDataset(Dataset):
         for full_noisy_sino in self.list_of_noisy_sinograms:
             split_sinos = [full_noisy_sino[:, i::self.k_splits] for i in range(self.k_splits)]
             split_angles = [self.angles[i::self.k_splits] for i in range(self.k_splits)]
-            
             sub_reconstructions_raw = [reconstruct_fbp(s, a) for s, a in zip(split_sinos, split_angles)]
             sub_reconstructions = [
                 resize(recon, (self.recon_size, self.recon_size), anti_aliasing=True, mode='reflect').astype(np.float32)
                 for recon in sub_reconstructions_raw
             ]
-
             for i in range(self.k_splits):
                 if self.strategy == 'X:1':
                     target_recon = sub_reconstructions[i]
@@ -336,43 +281,57 @@ def train_model(model, dataloader, criterion, optimizer, num_epochs, model_name=
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
-            if (i + 1) % (max(1, len(dataloader) // 5)) == 0: # Print a few times per epoch
+            if (i + 1) % (max(1, len(dataloader) // 5)) == 0:
                  print(f"Epoch [{epoch+1}/{num_epochs}], Batch [{i+1}/{len(dataloader)}], Loss: {loss.item():.6f}")
         epoch_loss = running_loss / len(dataloader)
         epoch_losses.append(epoch_loss)
         print(f"Epoch [{epoch+1}/{num_epochs}], Average Loss: {epoch_loss:.6f}")
     
-    # Save the trained model
-    model_save_path = os.path.join(save_path, f"{model_name.lower().replace(' ', '_')}_trained.pth")
+    model_save_name = f"{model_name.lower().replace(' ', '_').replace('-', '_')}_trained.pth"
+    model_save_path = os.path.join(save_path, model_save_name)
     torch.save(model.state_dict(), model_save_path)
     print(f"Finished Training {model_name}. Model saved to {model_save_path}")
+    
+    # Store losses for combined plot
+    training_losses_history[model_name] = epoch_losses
     return epoch_losses
 
-# --- 5. Evaluation Metrics ---
-def evaluate_denoising(denoised_img, ground_truth_img, noisy_img):
-    def normalize_for_metrics(img):
+# --- 5. Evaluation Metrics --- (Unchanged)
+def evaluate_denoising_metrics(denoised_img, ground_truth_img, noisy_img):
+    def normalize_for_metrics(img): # Inner function for local use
+        # Handle cases where img could be None (if a model wasn't loaded/trained)
+        if img is None: return None
         img_min, img_max = np.min(img), np.max(img)
         return (img - img_min) / (img_max - img_min) if img_max > img_min else img
-    gt_norm, denoised_norm, noisy_norm = map(normalize_for_metrics, [ground_truth_img, denoised_img, noisy_img])
-    data_range = 1.0
-    psnr_denoised = psnr(gt_norm, denoised_norm, data_range=data_range)
-    ssim_denoised = ssim(gt_norm, denoised_norm, data_range=data_range, channel_axis=None, win_size=min(7, gt_norm.shape[0], gt_norm.shape[1]))
-    psnr_noisy = psnr(gt_norm, noisy_norm, data_range=data_range)
-    ssim_noisy = ssim(gt_norm, noisy_norm, data_range=data_range, channel_axis=None, win_size=min(7, gt_norm.shape[0], gt_norm.shape[1]))
+    
+    gt_norm = normalize_for_metrics(ground_truth_img)
+    denoised_norm = normalize_for_metrics(denoised_img)
+    noisy_norm = normalize_for_metrics(noisy_img)
+
+    if gt_norm is None or noisy_norm is None:
+        print("Cannot calculate noisy metrics: ground truth or noisy image is None.")
+        psnr_noisy, ssim_noisy = np.nan, np.nan
+    else:
+        psnr_noisy = psnr(gt_norm, noisy_norm, data_range=1.0)
+        ssim_noisy = ssim(gt_norm, noisy_norm, data_range=1.0, channel_axis=None, win_size=min(7, gt_norm.shape[0], gt_norm.shape[1]))
     print(f"Noisy Image: PSNR={psnr_noisy:.2f} dB, SSIM={ssim_noisy:.4f}")
+
+    if gt_norm is None or denoised_norm is None:
+        print("Cannot calculate denoised metrics: ground truth or denoised image is None.")
+        psnr_denoised, ssim_denoised = np.nan, np.nan
+    else:
+        psnr_denoised = psnr(gt_norm, denoised_norm, data_range=1.0)
+        ssim_denoised = ssim(gt_norm, denoised_norm, data_range=1.0, channel_axis=None, win_size=min(7, gt_norm.shape[0], gt_norm.shape[1]))
     print(f"Denoised Image: PSNR={psnr_denoised:.2f} dB, SSIM={ssim_denoised:.4f}")
+    
     return psnr_denoised, ssim_denoised, psnr_noisy, ssim_noisy
 
-# --- Helper function for argparse ---
+# --- Helper function for argparse --- (Unchanged)
 def str_to_bool(value):
-    if isinstance(value, bool):
-        return value
-    if value.lower() in ('yes', 'true', 't', 'y', '1'):
-        return True
-    elif value.lower() in ('no', 'false', 'f', 'n', '0'):
-        return False
-    else:
-        raise argparse.ArgumentTypeError('Boolean value expected.')
+    if isinstance(value, bool): return value
+    if value.lower() in ('yes', 'true', 't', 'y', '1'): return True
+    elif value.lower() in ('no', 'false', 'f', 'n', '0'): return False
+    else: raise argparse.ArgumentTypeError('Boolean value expected.')
 
 # --- Main Execution with Argparse ---
 if __name__ == "__main__":
@@ -380,49 +339,47 @@ if __name__ == "__main__":
     parser.add_argument('--action', type=str, required=True,
                         choices=['generate_data', 'train_unet', 'train_dncnn', 'evaluate', 'full_run', 'visualize_phantom'],
                         help='Action to perform.')
-    parser.add_argument('--num_train_phantoms', type=int, default=5, help='Number of phantoms for training.')
-    parser.add_argument('--num_eval_phantoms', type=int, default=1, help='Number of phantoms for evaluation.')
+    parser.add_argument('--num_train_phantoms', type=int, default=20, help='Number of phantoms for training.') # Increased default
+    parser.add_argument('--num_eval_phantoms', type=int, default=3, help='Number of phantoms for evaluation.') # Increased default
     parser.add_argument('--epochs', type=int, default=NUM_EPOCHS, help='Number of training epochs.')
     parser.add_argument('--batch_size', type=int, default=BATCH_SIZE, help='Batch size for training.')
     parser.add_argument('--k_splits', type=int, default=K_SPLITS_NOISE2INVERSE, help='K splits for Noise2Inverse dataset.')
     parser.add_argument('--noise_type_arg', type=str, default=NOISE_TYPE, choices=['gaussian', 'poisson'], help='Type of noise to add.')
     parser.add_argument('--lr', type=float, default=LEARNING_RATE, help='Learning rate.')
-    parser.add_argument('--plot_data', type=str_to_bool, nargs='?', const=True, default=False, help='Plot generated data samples.')
-    parser.add_argument('--model_load_path', type=str, default='.', help='Directory to load trained models from for evaluation.')
-    parser.add_argument('--data_save_path', type=str, default='./data', help='Directory to save/load generated data.')
+    parser.add_argument('--plot_data', type=str_to_bool, nargs='?', const=True, default=True, help='Plot generated data samples and evaluation results.')
+    parser.add_argument('--model_load_path', type=str, default='trained_models', help='Directory to save/load trained models.')
+    parser.add_argument('--data_save_path', type=str, default='generated_data', help='Directory to save/load generated data.')
 
     args = parser.parse_args()
 
-    os.makedirs(args.data_save_path, exist_ok=True) # Ensure data directory exists
+    os.makedirs(args.data_save_path, exist_ok=True)
+    os.makedirs(args.model_load_path, exist_ok=True)
+    # PLOT_SAVE_DIR is created globally
 
     original_phantoms_2d_train = []
     training_noisy_sinograms = []
     training_angles = None
     
     eval_phantoms_gt_2d = []
-    eval_sinos_gt = []
-    eval_sinos_noisy = []
+    eval_sinos_gt_all = [] 
+    eval_sinos_noisy_all = [] 
     eval_fbps_gt = []
     eval_fbps_noisy = []
     eval_angles_list = []
 
-
     if args.action in ['generate_data', 'full_run', 'train_unet', 'train_dncnn']:
         print("1. Generating training phantom data...")
         for i in range(args.num_train_phantoms):
-            phantom_3d = generate_3d_human_phantom_array(PHANTOM_SIZE_XY, PHANTOM_DEPTH_Z)
-            phantom_2d = get_2d_slice_from_3d_phantom(phantom_3d) # Using a 2D slice
+            phantom_2d = generate_dense_varied_2d_phantom(PHANTOM_SIZE_XY)
             original_phantoms_2d_train.append(phantom_2d)
-            
-            # Save phantom if generate_data is the sole action
             if args.action == 'generate_data':
                  np.save(os.path.join(args.data_save_path, f"train_phantom_2d_{i}.npy"), phantom_2d)
-
-            if args.plot_data and i < 2 : # Plot first few
-                plt.figure(figsize=(6,6))
-                plt.imshow(phantom_2d, cmap='gray')
-                plt.title(f"Generated 2D Training Phantom Slice {i+1}")
+            if args.plot_data and i < 2 :
+                fig_ph = plt.figure(figsize=(6,6))
+                plt.imshow(phantom_2d, cmap='gray', vmin=0, vmax=np.max(phantom_2d) if np.max(phantom_2d) > 0 else 1.0)
+                plt.title(f"Generated 2D Training Phantom {i+1}")
                 plt.colorbar()
+                save_current_plot(fig_ph, f"train_phantom_sample_{i+1}")
                 plt.show()
         
         print("2. Simulating CT data for training...")
@@ -431,105 +388,77 @@ if __name__ == "__main__":
             if training_angles is None: training_angles = angles_current
             noisy_sinogram = add_noise(sinogram, args.noise_type_arg, NOISE_LEVEL_GAUSSIAN, NOISE_LEVEL_POISSON_LAM)
             training_noisy_sinograms.append(noisy_sinogram)
-            
             if args.action == 'generate_data':
                 np.save(os.path.join(args.data_save_path, f"train_sino_noisy_{i}.npy"), noisy_sinogram)
                 if i == 0: np.save(os.path.join(args.data_save_path, f"train_angles.npy"), training_angles)
-
-
             if args.plot_data and i < 2:
-                fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-                axes[0].imshow(p_2d, cmap='gray'); axes[0].set_title(f"Orig Phantom Slice {i+1}"); axes[0].axis('off')
+                fig_ct, axes = plt.subplots(1, 3, figsize=(15, 5))
+                axes[0].imshow(p_2d, cmap='gray'); axes[0].set_title(f"Orig Phantom {i+1}"); axes[0].axis('off')
                 axes[1].imshow(sinogram, cmap='gray'); axes[1].set_title("Clean Sinogram"); axes[1].axis('off')
                 axes[2].imshow(noisy_sinogram, cmap='gray'); axes[2].set_title(f"Noisy Sinogram ({args.noise_type_arg})"); axes[2].axis('off')
+                save_current_plot(fig_ct, f"train_ct_sim_sample_{i+1}")
                 plt.show()
         if args.action == 'generate_data':
              print(f"Training data (phantoms, sinograms, angles) saved to {args.data_save_path}")
 
-
     if args.action in ['generate_data', 'full_run', 'evaluate']:
         print("1. Generating evaluation phantom data...")
         for i in range(args.num_eval_phantoms):
-            phantom_3d_eval = generate_3d_human_phantom_array(PHANTOM_SIZE_XY, PHANTOM_DEPTH_Z)
-            phantom_2d_eval_gt = get_2d_slice_from_3d_phantom(phantom_3d_eval)
+            phantom_2d_eval_gt = generate_dense_varied_2d_phantom(PHANTOM_SIZE_XY)
             eval_phantoms_gt_2d.append(phantom_2d_eval_gt)
-
             sino_gt, angles_curr_eval = simulate_projections(phantom_2d_eval_gt, N_PROJECTIONS)
             sino_noisy = add_noise(sino_gt, args.noise_type_arg, NOISE_LEVEL_GAUSSIAN, NOISE_LEVEL_POISSON_LAM)
-            
             fbp_gt = reconstruct_fbp(sino_gt, angles_curr_eval)
             fbp_noisy = reconstruct_fbp(sino_noisy, angles_curr_eval)
-
-            eval_sinos_gt.append(sino_gt)
-            eval_sinos_noisy.append(sino_noisy)
+            eval_sinos_gt_all.append(sino_gt)
+            eval_sinos_noisy_all.append(sino_noisy)
             eval_fbps_gt.append(fbp_gt)
             eval_fbps_noisy.append(fbp_noisy)
             eval_angles_list.append(angles_curr_eval)
-
             if args.action == 'generate_data':
                 np.save(os.path.join(args.data_save_path, f"eval_phantom_2d_gt_{i}.npy"), phantom_2d_eval_gt)
                 np.save(os.path.join(args.data_save_path, f"eval_sino_gt_{i}.npy"), sino_gt)
                 np.save(os.path.join(args.data_save_path, f"eval_sino_noisy_{i}.npy"), sino_noisy)
                 np.save(os.path.join(args.data_save_path, f"eval_fbp_gt_{i}.npy"), fbp_gt)
                 np.save(os.path.join(args.data_save_path, f"eval_fbp_noisy_{i}.npy"), fbp_noisy)
-                if i == 0: np.save(os.path.join(args.data_save_path, f"eval_angles.npy"), angles_curr_eval)
-            
-            if args.plot_data and i < 1: # Plot first eval case
-                fig, axes = plt.subplots(1, 4, figsize=(20, 5))
-                axes[0].imshow(phantom_2d_eval_gt, cmap='gray'); axes[0].set_title(f"Eval GT Phantom Slice {i+1}"); axes[0].axis('off')
+                if i == 0: np.save(os.path.join(args.data_save_path, f"eval_angles_eval.npy"), angles_curr_eval)
+            if args.plot_data and i < 1:
+                fig_eval_data, axes = plt.subplots(1, 4, figsize=(20, 5))
+                axes[0].imshow(phantom_2d_eval_gt, cmap='gray'); axes[0].set_title(f"Eval GT Phantom {i+1}"); axes[0].axis('off')
                 axes[1].imshow(sino_noisy, cmap='gray'); axes[1].set_title("Eval Noisy Sinogram"); axes[1].axis('off')
                 axes[2].imshow(fbp_gt, cmap='gray'); axes[2].set_title("Eval GT FBP"); axes[2].axis('off')
                 axes[3].imshow(fbp_noisy, cmap='gray'); axes[3].set_title("Eval Noisy FBP"); axes[3].axis('off')
+                save_current_plot(fig_eval_data, f"eval_data_sample_{i+1}")
                 plt.show()
         if args.action == 'generate_data':
             print(f"Evaluation data saved to {args.data_save_path}")
 
-
     if args.action == 'visualize_phantom':
-        print("Visualizing a sample 3D phantom and its 2D slice...")
-        phantom_3d_viz = generate_3d_human_phantom_array(PHANTOM_SIZE_XY, PHANTOM_DEPTH_Z)
-        phantom_2d_viz = get_2d_slice_from_3d_phantom(phantom_3d_viz)
-
-        fig_3d = plt.figure(figsize=(7,7))
-        ax_3d = fig_3d.add_subplot(111, projection='3d')
-        # Simple 3D scatter plot of non-zero voxels for visualization
-        x, y, z = np.where(phantom_3d_viz > 0.1) # Plot points with some density
-        c = phantom_3d_viz[x,y,z]
-        ax_3d.scatter(x, y, z, c=c, cmap='viridis', s=5)
-        ax_3d.set_xlabel('X')
-        ax_3d.set_ylabel('Y')
-        ax_3d.set_zlabel('Z')
-        ax_3d.set_title('3D Phantom Voxel Visualization (Sample)')
-        plt.show()
-
-        plt.figure(figsize=(6,6))
-        plt.imshow(phantom_2d_viz, cmap='gray')
-        plt.title("2D Slice from 3D Phantom")
+        print("Visualizing a sample 2D dense & varied phantom...")
+        phantom_2d_viz = generate_dense_varied_2d_phantom(PHANTOM_SIZE_XY)
+        fig_viz = plt.figure(figsize=(7,7))
+        plt.imshow(phantom_2d_viz, cmap='gray', vmin=0, vmax=np.max(phantom_2d_viz) if np.max(phantom_2d_viz) > 0 else 1.0)
+        plt.title("Dense & Varied 2D Phantom Sample")
         plt.colorbar()
+        save_current_plot(fig_viz, "sample_dense_varied_2d_phantom")
         plt.show()
-
 
     if args.action in ['train_unet', 'train_dncnn', 'full_run']:
-        # Load data if not generated in this run (assuming 'full_run' generates it)
-        if not training_noisy_sinograms: # If list is empty, try loading
+        if not training_noisy_sinograms:
             print(f"Loading training data from {args.data_save_path}...")
             try:
                 for i in range(args.num_train_phantoms):
                     training_noisy_sinograms.append(np.load(os.path.join(args.data_save_path, f"train_sino_noisy_{i}.npy")))
                 training_angles = np.load(os.path.join(args.data_save_path, f"train_angles.npy"))
             except FileNotFoundError:
-                print("Error: Training data not found. Please run with --action generate_data first or use full_run.")
-                exit()
+                print("Error: Training data not found. Run --action generate_data or full_run."); exit()
         
         print("3. Preparing Noise2Inverse DataLoader...")
         n2i_dataset = Noise2InverseDataset(training_noisy_sinograms, training_angles, 
                                            k_splits=args.k_splits, recon_size=PHANTOM_SIZE_XY)
-        if len(n2i_dataset) == 0:
-            print("Dataset is empty. Check k_splits and number of phantoms.")
-            exit()
+        if len(n2i_dataset) == 0: print("Dataset is empty."); exit()
         n2i_dataloader = DataLoader(n2i_dataset, batch_size=args.batch_size, shuffle=True, num_workers=0)
         print(f"Noise2Inverse dataset size: {len(n2i_dataset)} pairs.")
-
         criterion = nn.MSELoss()
         
         if args.action in ['train_unet', 'full_run']:
@@ -538,9 +467,11 @@ if __name__ == "__main__":
             optimizer_unet = optim.Adam(unet_model.parameters(), lr=args.lr)
             unet_losses = train_model(unet_model, n2i_dataloader, criterion, optimizer_unet, args.epochs, "U-Net", save_path=args.model_load_path)
             if args.plot_data:
-                plt.figure(figsize=(10, 5))
+                fig_loss_unet = plt.figure(figsize=(10, 5))
                 plt.plot(unet_losses, label="U-Net Training Loss")
-                plt.xlabel("Epoch"); plt.ylabel("Avg MSE Loss"); plt.title("U-Net Training"); plt.legend(); plt.grid(True); plt.show()
+                plt.xlabel("Epoch"); plt.ylabel("Avg MSE Loss"); plt.title("U-Net Training Convergence"); plt.legend(); plt.grid(True)
+                save_current_plot(fig_loss_unet, "unet_training_loss")
+                plt.show()
 
         if args.action in ['train_dncnn', 'full_run']:
             print("4b. Initializing DnCNN model...")
@@ -548,93 +479,146 @@ if __name__ == "__main__":
             optimizer_dncnn = optim.Adam(dncnn_model.parameters(), lr=args.lr)
             dncnn_losses = train_model(dncnn_model, n2i_dataloader, criterion, optimizer_dncnn, args.epochs, "DnCNN", save_path=args.model_load_path)
             if args.plot_data:
-                plt.figure(figsize=(10, 5))
+                fig_loss_dncnn = plt.figure(figsize=(10, 5))
                 plt.plot(dncnn_losses, label="DnCNN Training Loss")
-                plt.xlabel("Epoch"); plt.ylabel("Avg MSE Loss"); plt.title("DnCNN Training"); plt.legend(); plt.grid(True); plt.show()
+                plt.xlabel("Epoch"); plt.ylabel("Avg MSE Loss"); plt.title("DnCNN Training Convergence"); plt.legend(); plt.grid(True)
+                save_current_plot(fig_loss_dncnn, "dncnn_training_loss")
+                plt.show()
+        
+        # Combined loss plot if both models were trained in this session
+        if args.plot_data and 'U-Net' in training_losses_history and 'DnCNN' in training_losses_history:
+            fig_loss_combined = plt.figure(figsize=(10,5))
+            plt.plot(training_losses_history['U-Net'], label="U-Net Training Loss")
+            plt.plot(training_losses_history['DnCNN'], label="DnCNN Training Loss")
+            plt.xlabel("Epoch"); plt.ylabel("Avg MSE Loss"); plt.title("Comparative Training Convergence"); plt.legend(); plt.grid(True)
+            save_current_plot(fig_loss_combined, "combined_training_loss")
+            plt.show()
+
 
     if args.action in ['evaluate', 'full_run']:
-        # Load evaluation data if not generated in this run
-        if not eval_fbps_gt:
+        if not eval_fbps_gt: 
             print(f"Loading evaluation data from {args.data_save_path}...")
             try:
                 for i in range(args.num_eval_phantoms):
                     eval_fbps_gt.append(np.load(os.path.join(args.data_save_path, f"eval_fbp_gt_{i}.npy")))
                     eval_fbps_noisy.append(np.load(os.path.join(args.data_save_path, f"eval_fbp_noisy_{i}.npy")))
-                # eval_angles = np.load(os.path.join(args.data_save_path, f"eval_angles.npy")) # Not strictly needed for direct FBP eval
+                    eval_sinos_noisy_all.append(np.load(os.path.join(args.data_save_path, f"eval_sino_noisy_{i}.npy")))
+                    eval_angles_list.append(np.load(os.path.join(args.data_save_path, f"eval_angles_eval.npy")))
             except FileNotFoundError:
-                print("Error: Evaluation FBP data not found. Please run with --action generate_data first or use full_run.")
-                exit()
+                print("Error: Evaluation FBP data not found. Run --action generate_data or full_run."); exit()
 
-        print("\n6. Evaluating models...")
-        
+        print("\n6. Evaluating models with Noise2Inverse Inference Strategy...")
         unet_model_eval = UNet(MODEL_INPUT_CHANNELS, MODEL_OUTPUT_CHANNELS)
         dncnn_model_eval = DnCNN(MODEL_INPUT_CHANNELS, MODEL_OUTPUT_CHANNELS)
 
+        unet_loaded, dncnn_loaded = False, False
         try:
             unet_model_eval.load_state_dict(torch.load(os.path.join(args.model_load_path, "u-net_trained.pth"), map_location=DEVICE))
-            print("U-Net model loaded for evaluation.")
-        except FileNotFoundError:
-            print("U-Net model not found. Skipping U-Net evaluation. Train it first or check path.")
-            unet_model_eval = None
-
+            unet_model_eval.to(DEVICE).eval(); unet_loaded = True; print("U-Net model loaded.")
+        except FileNotFoundError: print("U-Net model not found. Skipping U-Net evaluation.")
         try:
             dncnn_model_eval.load_state_dict(torch.load(os.path.join(args.model_load_path, "dncnn_trained.pth"), map_location=DEVICE))
-            print("DnCNN model loaded for evaluation.")
-        except FileNotFoundError:
-            print("DnCNN model not found. Skipping DnCNN evaluation. Train it first or check path.")
-            dncnn_model_eval = None
+            dncnn_model_eval.to(DEVICE).eval(); dncnn_loaded = True; print("DnCNN model loaded.")
+        except FileNotFoundError: print("DnCNN model not found. Skipping DnCNN evaluation.")
         
-        if unet_model_eval: unet_model_eval.to(DEVICE).eval()
-        if dncnn_model_eval: dncnn_model_eval.to(DEVICE).eval()
-
         for i in range(len(eval_fbps_gt)):
             current_fbp_gt = eval_fbps_gt[i]
-            current_fbp_noisy = eval_fbps_noisy[i]
+            current_fbp_noisy_for_comparison = eval_fbps_noisy[i]
+            current_full_noisy_sino_eval = eval_sinos_noisy_all[i]
+            current_eval_angles = eval_angles_list[i]
             print(f"\n--- Evaluating on Phantom {i+1} ---")
 
-            denoised_unet_img, denoised_dncnn_img = None, None
+            denoised_unet_n2i_output, denoised_dncnn_n2i_output = None, None
+            residual_unet_img, residual_dncnn_img = None, None
+
+            eval_split_sinos = [current_full_noisy_sino_eval[:, s_idx::args.k_splits] for s_idx in range(args.k_splits)]
+            eval_split_angles = [current_eval_angles[s_idx::args.k_splits] for s_idx in range(args.k_splits)]
+            eval_input_sub_recons_raw = [reconstruct_fbp(s, a) for s, a in zip(eval_split_sinos, eval_split_angles)]
+            eval_input_sub_recons = [
+                resize(recon, (PHANTOM_SIZE_XY, PHANTOM_SIZE_XY), anti_aliasing=True, mode='reflect').astype(np.float32)
+                for recon in eval_input_sub_recons_raw
+            ]
 
             with torch.no_grad():
-                input_tensor_eval = torch.from_numpy(current_fbp_noisy).unsqueeze(0).unsqueeze(0).to(DEVICE)
-                
-                if unet_model_eval:
-                    denoised_unet_tensor = unet_model_eval(input_tensor_eval)
-                    denoised_unet_img = denoised_unet_tensor.squeeze().cpu().numpy()
-                    print("\nU-Net Evaluation Results:")
-                    evaluate_denoising(denoised_unet_img, current_fbp_gt, current_fbp_noisy)
-                
-                if dncnn_model_eval:
-                    denoised_dncnn_tensor = dncnn_model_eval(input_tensor_eval)
-                    denoised_dncnn_img = denoised_dncnn_tensor.squeeze().cpu().numpy()
-                    print("\nDnCNN Evaluation Results:")
-                    evaluate_denoising(denoised_dncnn_img, current_fbp_gt, current_fbp_noisy)
+                if unet_loaded:
+                    unet_outputs_to_average = []
+                    for k_main_loop in range(args.k_splits):
+                        current_input_indices = [j_idx for j_idx in range(args.k_splits) if j_idx != k_main_loop]
+                        if not current_input_indices: continue
+                        input_recons_to_avg_eval = [eval_input_sub_recons[j_idx] for j_idx in current_input_indices]
+                        network_input_eval = np.mean(input_recons_to_avg_eval, axis=0)
+                        input_tensor = torch.from_numpy(network_input_eval).unsqueeze(0).unsqueeze(0).to(DEVICE)
+                        unet_outputs_to_average.append(unet_model_eval(input_tensor).squeeze().cpu().numpy())
+                    if unet_outputs_to_average:
+                        denoised_unet_n2i_output = np.mean(unet_outputs_to_average, axis=0)
+                        residual_unet_img = denoised_unet_n2i_output - current_fbp_gt
+                        print("\nU-Net N2I Evaluation Results:")
+                        evaluate_denoising_metrics(denoised_unet_n2i_output, current_fbp_gt, current_fbp_noisy_for_comparison)
 
-            # Visual Inspection for the current phantom
+                if dncnn_loaded:
+                    dncnn_outputs_to_average = []
+                    for k_main_loop in range(args.k_splits):
+                        current_input_indices = [j_idx for j_idx in range(args.k_splits) if j_idx != k_main_loop]
+                        if not current_input_indices: continue
+                        input_recons_to_avg_eval = [eval_input_sub_recons[j_idx] for j_idx in current_input_indices]
+                        network_input_eval = np.mean(input_recons_to_avg_eval, axis=0)
+                        input_tensor = torch.from_numpy(network_input_eval).unsqueeze(0).unsqueeze(0).to(DEVICE)
+                        dncnn_outputs_to_average.append(dncnn_model_eval(input_tensor).squeeze().cpu().numpy())
+                    if dncnn_outputs_to_average:
+                        denoised_dncnn_n2i_output = np.mean(dncnn_outputs_to_average, axis=0)
+                        residual_dncnn_img = denoised_dncnn_n2i_output - current_fbp_gt
+                        print("\nDnCNN N2I Evaluation Results:")
+                        evaluate_denoising_metrics(denoised_dncnn_n2i_output, current_fbp_gt, current_fbp_noisy_for_comparison)
+
             if args.plot_data:
-                num_cols = 2 # GT, Noisy
-                if denoised_unet_img is not None: num_cols += 1
-                if denoised_dncnn_img is not None: num_cols +=1
+                fig_eval, axes = plt.subplots(2, 3, figsize=(15, 10)) # 2 rows, 3 columns
+                common_vlim = (np.min(current_fbp_gt), np.max(current_fbp_gt))
                 
-                fig_w = 5 * num_cols
-                fig, axes = plt.subplots(1, num_cols, figsize=(fig_w, 5))
-                ax_idx = 0
-                
-                common_kwargs = {'cmap': 'gray', 'vmin': np.min(current_fbp_gt), 'vmax': np.max(current_fbp_gt)}
-                axes[ax_idx].imshow(current_fbp_gt, **common_kwargs); axes[ax_idx].set_title("GT FBP"); axes[ax_idx].axis('off'); ax_idx+=1
-                axes[ax_idx].imshow(current_fbp_noisy, **common_kwargs); axes[ax_idx].set_title(f"Noisy FBP"); axes[ax_idx].axis('off'); ax_idx+=1
-                
-                if denoised_unet_img is not None:
-                    axes[ax_idx].imshow(denoised_unet_img, **common_kwargs); axes[ax_idx].set_title("U-Net Denoised"); axes[ax_idx].axis('off'); ax_idx+=1
-                if denoised_dncnn_img is not None:
-                    axes[ax_idx].imshow(denoised_dncnn_img, **common_kwargs); axes[ax_idx].set_title("DnCNN Denoised"); axes[ax_idx].axis('off'); ax_idx+=1
-                
-                plt.tight_layout()
-                plt.suptitle(f"Visual Comparison - Phantom {i+1}", fontsize=16)
-                plt.subplots_adjust(top=0.85)
+                # Row 1
+                axes[0, 0].imshow(current_fbp_gt, cmap='gray', vmin=common_vlim[0], vmax=common_vlim[1]); axes[0, 0].set_title("GT FBP"); axes[0, 0].axis('off')
+                axes[0, 1].imshow(current_fbp_noisy_for_comparison, cmap='gray', vmin=common_vlim[0], vmax=common_vlim[1]); axes[0, 1].set_title("Noisy FBP"); axes[0, 1].axis('off')
+                axes[0, 2].axis('off') # Empty for now, or for metrics text
+
+                # Row 2 - U-Net
+                if denoised_unet_n2i_output is not None:
+                    axes[1, 0].imshow(denoised_unet_n2i_output, cmap='gray', vmin=common_vlim[0], vmax=common_vlim[1]); axes[1, 0].set_title("U-Net Denoised"); axes[1, 0].axis('off')
+                    if residual_unet_img is not None:
+                         # Determine appropriate vmin/vmax for residual
+                        res_abs_max = np.max(np.abs(residual_unet_img))
+                        axes[1, 1].imshow(residual_unet_img, cmap='coolwarm', vmin=-res_abs_max, vmax=res_abs_max); axes[1, 1].set_title("U-Net Residual"); axes[1, 1].axis('off')
+                    else:
+                        axes[1,1].axis('off')
+                else:
+                    axes[1,0].axis('off'); axes[1,1].axis('off')
+
+                # Row 2 - DnCNN (or Row 3 if needed) - let's use the last column for DnCNN denoised
+                if denoised_dncnn_n2i_output is not None:
+                     axes[1, 2].imshow(denoised_dncnn_n2i_output, cmap='gray', vmin=common_vlim[0], vmax=common_vlim[1]); axes[1, 2].set_title("DnCNN Denoised"); axes[1, 2].axis('off')
+                else:
+                    axes[1,2].axis('off')
+
+                # If you want separate DnCNN residual, you'd need another row or a separate figure.
+                # For now, this layout shows GT, Noisy, U-Net Denoised, U-Net Residual, DnCNN Denoised.
+                # The 6th slot (axes[0,2]) is free.
+
+                plt.tight_layout(rect=[0, 0.03, 1, 0.95]) # Adjust layout to make space for suptitle
+                fig_eval.suptitle(f"N2I Evaluation Comparison - Phantom {i+1}", fontsize=16)
+                save_current_plot(fig_eval, f"eval_n2i_comparison_phantom_{i+1}")
                 plt.show()
 
+                # Separate plot for DnCNN residual if it exists
+                if args.plot_data and residual_dncnn_img is not None:
+                    fig_res_dncnn = plt.figure(figsize=(5,5))
+                    res_abs_max_dncnn = np.max(np.abs(residual_dncnn_img))
+                    plt.imshow(residual_dncnn_img, cmap='coolwarm', vmin=-res_abs_max_dncnn, vmax=res_abs_max_dncnn)
+                    plt.title(f"DnCNN Residual - Phantom {i+1}")
+                    plt.axis('off'); plt.colorbar()
+                    save_current_plot(fig_res_dncnn, f"eval_dncnn_residual_phantom_{i+1}")
+                    plt.show()
+
+
     print("\nScript finished.")
-    if args.action == 'generate_data':
-        print(f"Data generation complete. Files saved in {args.data_save_path}")
-    print("Remember to expand and refine for your research, especially for full 3D processing.")
+    if args.action == 'generate_data': print(f"Data generation complete. Files saved in {args.data_save_path}")
+    print(f"Plots saved in {PLOT_SAVE_DIR}")
+    print("If denoising is still suboptimal: try more epochs, more training phantoms, tune learning rate/batch size, or adjust K-splits for N2I.")
 
