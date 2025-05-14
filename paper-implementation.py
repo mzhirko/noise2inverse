@@ -1,15 +1,3 @@
-# main_experiment.py
-# Author: Gemini
-# Date: May 14, 2025
-# Description:
-# This script provides a foundational framework for the project "Impact of Network Architecture on Noise2Inverse".
-# Updates:
-# - Phantom generation: Increased density, variety, and added "foam-like" regions.
-# - Plotting: Added combined loss plot for U-Net & DnCNN.
-# - Evaluation plot enhanced to 3x2 layout (GT, Noisy, Denoised versions, Residuals).
-# - All plots saved to 'plots/' directory.
-# - Retained improvements for denoising (epochs, batch size, N2I inference).
-
 import numpy as np
 import torch
 import torch.nn as nn
@@ -55,14 +43,6 @@ os.makedirs(PLOT_SAVE_DIR, exist_ok=True)
 
 # Global dictionary to store losses for combined plot
 training_losses_history = {}
-
-def save_current_plot(figure, filename_prefix): # Modified to take figure object
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = os.path.join(PLOT_SAVE_DIR, f"{filename_prefix}_{timestamp}.png")
-    figure.savefig(filename)
-    print(f"Plot saved to {filename}")
-    # plt.close(figure) # Close the figure after saving to free memory, if not shown.
-    # plt.show() # If you still want to show interactively.
 
 # --- 1. Dense & Varied 2D Phantom Generation ---
 def generate_dense_varied_2d_phantom(size=PHANTOM_SIZE_XY, num_regions=3, details_per_region=10, foam_elements=50):
@@ -375,11 +355,10 @@ if __name__ == "__main__":
             if args.action == 'generate_data':
                  np.save(os.path.join(args.data_save_path, f"train_phantom_2d_{i}.npy"), phantom_2d)
             if args.plot_data and i < 2 :
-                fig_ph = plt.figure(figsize=(6,6))
+                plt.figure(figsize=(6,6))
                 plt.imshow(phantom_2d, cmap='gray', vmin=0, vmax=np.max(phantom_2d) if np.max(phantom_2d) > 0 else 1.0)
                 plt.title(f"Generated 2D Training Phantom {i+1}")
                 plt.colorbar()
-                save_current_plot(fig_ph, f"train_phantom_sample_{i+1}")
                 plt.show()
         
         print("2. Simulating CT data for training...")
@@ -396,7 +375,7 @@ if __name__ == "__main__":
                 axes[0].imshow(p_2d, cmap='gray'); axes[0].set_title(f"Orig Phantom {i+1}"); axes[0].axis('off')
                 axes[1].imshow(sinogram, cmap='gray'); axes[1].set_title("Clean Sinogram"); axes[1].axis('off')
                 axes[2].imshow(noisy_sinogram, cmap='gray'); axes[2].set_title(f"Noisy Sinogram ({args.noise_type_arg})"); axes[2].axis('off')
-                save_current_plot(fig_ct, f"train_ct_sim_sample_{i+1}")
+                plt.tight_layout()
                 plt.show()
         if args.action == 'generate_data':
              print(f"Training data (phantoms, sinograms, angles) saved to {args.data_save_path}")
@@ -428,7 +407,7 @@ if __name__ == "__main__":
                 axes[1].imshow(sino_noisy, cmap='gray'); axes[1].set_title("Eval Noisy Sinogram"); axes[1].axis('off')
                 axes[2].imshow(fbp_gt, cmap='gray'); axes[2].set_title("Eval GT FBP"); axes[2].axis('off')
                 axes[3].imshow(fbp_noisy, cmap='gray'); axes[3].set_title("Eval Noisy FBP"); axes[3].axis('off')
-                save_current_plot(fig_eval_data, f"eval_data_sample_{i+1}")
+                plt.tight_layout()
                 plt.show()
         if args.action == 'generate_data':
             print(f"Evaluation data saved to {args.data_save_path}")
@@ -436,11 +415,10 @@ if __name__ == "__main__":
     if args.action == 'visualize_phantom':
         print("Visualizing a sample 2D dense & varied phantom...")
         phantom_2d_viz = generate_dense_varied_2d_phantom(PHANTOM_SIZE_XY)
-        fig_viz = plt.figure(figsize=(7,7))
+        plt.figure(figsize=(7,7))
         plt.imshow(phantom_2d_viz, cmap='gray', vmin=0, vmax=np.max(phantom_2d_viz) if np.max(phantom_2d_viz) > 0 else 1.0)
         plt.title("Dense & Varied 2D Phantom Sample")
         plt.colorbar()
-        save_current_plot(fig_viz, "sample_dense_varied_2d_phantom")
         plt.show()
 
     if args.action in ['train_unet', 'train_dncnn', 'full_run']:
@@ -467,10 +445,9 @@ if __name__ == "__main__":
             optimizer_unet = optim.Adam(unet_model.parameters(), lr=args.lr)
             unet_losses = train_model(unet_model, n2i_dataloader, criterion, optimizer_unet, args.epochs, "U-Net", save_path=args.model_load_path)
             if args.plot_data:
-                fig_loss_unet = plt.figure(figsize=(10, 5))
+                plt.figure(figsize=(10, 5))
                 plt.plot(unet_losses, label="U-Net Training Loss")
                 plt.xlabel("Epoch"); plt.ylabel("Avg MSE Loss"); plt.title("U-Net Training Convergence"); plt.legend(); plt.grid(True)
-                save_current_plot(fig_loss_unet, "unet_training_loss")
                 plt.show()
 
         if args.action in ['train_dncnn', 'full_run']:
@@ -479,19 +456,17 @@ if __name__ == "__main__":
             optimizer_dncnn = optim.Adam(dncnn_model.parameters(), lr=args.lr)
             dncnn_losses = train_model(dncnn_model, n2i_dataloader, criterion, optimizer_dncnn, args.epochs, "DnCNN", save_path=args.model_load_path)
             if args.plot_data:
-                fig_loss_dncnn = plt.figure(figsize=(10, 5))
+                plt.figure(figsize=(10, 5))
                 plt.plot(dncnn_losses, label="DnCNN Training Loss")
                 plt.xlabel("Epoch"); plt.ylabel("Avg MSE Loss"); plt.title("DnCNN Training Convergence"); plt.legend(); plt.grid(True)
-                save_current_plot(fig_loss_dncnn, "dncnn_training_loss")
                 plt.show()
         
         # Combined loss plot if both models were trained in this session
         if args.plot_data and 'U-Net' in training_losses_history and 'DnCNN' in training_losses_history:
-            fig_loss_combined = plt.figure(figsize=(10,5))
+            plt.figure(figsize=(10,5))
             plt.plot(training_losses_history['U-Net'], label="U-Net Training Loss")
             plt.plot(training_losses_history['DnCNN'], label="DnCNN Training Loss")
             plt.xlabel("Epoch"); plt.ylabel("Avg MSE Loss"); plt.title("Comparative Training Convergence"); plt.legend(); plt.grid(True)
-            save_current_plot(fig_loss_combined, "combined_training_loss")
             plt.show()
 
 
@@ -512,14 +487,46 @@ if __name__ == "__main__":
         dncnn_model_eval = DnCNN(MODEL_INPUT_CHANNELS, MODEL_OUTPUT_CHANNELS)
 
         unet_loaded, dncnn_loaded = False, False
-        try:
-            unet_model_eval.load_state_dict(torch.load(os.path.join(args.model_load_path, "u-net_trained.pth"), map_location=DEVICE))
-            unet_model_eval.to(DEVICE).eval(); unet_loaded = True; print("U-Net model loaded.")
-        except FileNotFoundError: print("U-Net model not found. Skipping U-Net evaluation.")
-        try:
-            dncnn_model_eval.load_state_dict(torch.load(os.path.join(args.model_load_path, "dncnn_trained.pth"), map_location=DEVICE))
-            dncnn_model_eval.to(DEVICE).eval(); dncnn_loaded = True; print("DnCNN model loaded.")
-        except FileNotFoundError: print("DnCNN model not found. Skipping DnCNN evaluation.")
+        
+        # Different possible filenames to try
+        unet_filenames = ["u-net_trained.pth", "u_net_trained.pth", "unet_trained.pth"]
+        dncnn_filenames = ["dncnn_trained.pth", "dncnn-trained.pth"]
+        
+        # Try to load U-Net model
+        for unet_filename in unet_filenames:
+            try:
+                unet_path = os.path.join(args.model_load_path, unet_filename)
+                if os.path.exists(unet_path):
+                    unet_model_eval.load_state_dict(torch.load(unet_path, map_location=DEVICE))
+                    unet_model_eval.to(DEVICE).eval()
+                    unet_loaded = True
+                    print(f"U-Net model loaded from {unet_path}")
+                    break
+            except Exception as e:
+                print(f"Error loading {unet_filename}: {str(e)}")
+                continue
+        
+        if not unet_loaded:
+            print("U-Net model not found. Skipping U-Net evaluation.")
+            print(f"Searched in {args.model_load_path} for: {', '.join(unet_filenames)}")
+        
+        # Try to load DnCNN model
+        for dncnn_filename in dncnn_filenames:
+            try:
+                dncnn_path = os.path.join(args.model_load_path, dncnn_filename)
+                if os.path.exists(dncnn_path):
+                    dncnn_model_eval.load_state_dict(torch.load(dncnn_path, map_location=DEVICE))
+                    dncnn_model_eval.to(DEVICE).eval()
+                    dncnn_loaded = True
+                    print(f"DnCNN model loaded from {dncnn_path}")
+                    break
+            except Exception as e:
+                print(f"Error loading {dncnn_filename}: {str(e)}")
+                continue
+        
+        if not dncnn_loaded:
+            print("DnCNN model not found. Skipping DnCNN evaluation.")
+            print(f"Searched in {args.model_load_path} for: {', '.join(dncnn_filenames)}")
         
         for i in range(len(eval_fbps_gt)):
             current_fbp_gt = eval_fbps_gt[i]
@@ -571,54 +578,127 @@ if __name__ == "__main__":
                         evaluate_denoising_metrics(denoised_dncnn_n2i_output, current_fbp_gt, current_fbp_noisy_for_comparison)
 
             if args.plot_data:
-                fig_eval, axes = plt.subplots(2, 3, figsize=(15, 10)) # 2 rows, 3 columns
-                common_vlim = (np.min(current_fbp_gt), np.max(current_fbp_gt))
+                # Create visual comparison plot based on the example image
+                fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+                common_kwargs = {'cmap': 'gray', 'vmin': np.min(current_fbp_gt), 'vmax': np.max(current_fbp_gt)}
                 
-                # Row 1
-                axes[0, 0].imshow(current_fbp_gt, cmap='gray', vmin=common_vlim[0], vmax=common_vlim[1]); axes[0, 0].set_title("GT FBP"); axes[0, 0].axis('off')
-                axes[0, 1].imshow(current_fbp_noisy_for_comparison, cmap='gray', vmin=common_vlim[0], vmax=common_vlim[1]); axes[0, 1].set_title("Noisy FBP"); axes[0, 1].axis('off')
-                axes[0, 2].axis('off') # Empty for now, or for metrics text
-
-                # Row 2 - U-Net
+                # First row
+                axes[0, 0].imshow(current_fbp_gt, **common_kwargs)
+                axes[0, 0].set_title("Ground Truth FBP (Clean)")
+                axes[0, 0].axis('off')
+                
+                axes[0, 1].imshow(current_fbp_noisy_for_comparison, **common_kwargs)
+                axes[0, 1].set_title(f"Noisy FBP ({args.noise_type_arg})")
+                axes[0, 1].axis('off')
+                
+                # Put DnCNN residual in the third position instead of Empty
+                if residual_dncnn_img is not None:
+                    axes[0, 2].imshow(residual_dncnn_img, cmap='coolwarm',
+                                     vmin=-0.3*np.max(current_fbp_gt), vmax=0.3*np.max(current_fbp_gt))
+                    axes[0, 2].set_title("Residual (DnCNN - GT)")
+                    axes[0, 2].axis('off')
+                else:
+                    axes[0, 2].imshow(np.zeros_like(current_fbp_gt), cmap='coolwarm')
+                    axes[0, 2].set_title("Residual (DnCNN - GT) (Missing)")
+                    axes[0, 2].axis('off')
+                
+                # Second row - exactly like your example image
+                # U-Net denoised result
                 if denoised_unet_n2i_output is not None:
-                    axes[1, 0].imshow(denoised_unet_n2i_output, cmap='gray', vmin=common_vlim[0], vmax=common_vlim[1]); axes[1, 0].set_title("U-Net Denoised"); axes[1, 0].axis('off')
-                    if residual_unet_img is not None:
-                         # Determine appropriate vmin/vmax for residual
-                        res_abs_max = np.max(np.abs(residual_unet_img))
-                        axes[1, 1].imshow(residual_unet_img, cmap='coolwarm', vmin=-res_abs_max, vmax=res_abs_max); axes[1, 1].set_title("U-Net Residual"); axes[1, 1].axis('off')
-                    else:
-                        axes[1,1].axis('off')
+                    axes[1, 0].imshow(denoised_unet_n2i_output, **common_kwargs)
+                    axes[1, 0].set_title("Denoised by U-Net")
+                    axes[1, 0].axis('off')
                 else:
-                    axes[1,0].axis('off'); axes[1,1].axis('off')
-
-                # Row 2 - DnCNN (or Row 3 if needed) - let's use the last column for DnCNN denoised
+                    axes[1, 0].imshow(np.zeros_like(current_fbp_gt), **common_kwargs)
+                    axes[1, 0].set_title("Denoised by U-Net (Missing)")
+                    axes[1, 0].axis('off')
+                
+                # U-Net residual
+                if residual_unet_img is not None:
+                    axes[1, 1].imshow(residual_unet_img, cmap='coolwarm', 
+                                     vmin=-0.3*np.max(current_fbp_gt), vmax=0.3*np.max(current_fbp_gt))
+                    axes[1, 1].set_title("Residual (U-Net - GT)")
+                    axes[1, 1].axis('off')
+                else:
+                    axes[1, 1].imshow(np.zeros_like(current_fbp_gt), cmap='coolwarm')
+                    axes[1, 1].set_title("Residual (U-Net - GT) (Missing)")
+                    axes[1, 1].axis('off')
+                
+                # DnCNN result
                 if denoised_dncnn_n2i_output is not None:
-                     axes[1, 2].imshow(denoised_dncnn_n2i_output, cmap='gray', vmin=common_vlim[0], vmax=common_vlim[1]); axes[1, 2].set_title("DnCNN Denoised"); axes[1, 2].axis('off')
+                    axes[1, 2].imshow(denoised_dncnn_n2i_output, **common_kwargs)
+                    axes[1, 2].set_title("Denoised by DnCNN")
+                    axes[1, 2].axis('off')
                 else:
-                    axes[1,2].axis('off')
-
-                # If you want separate DnCNN residual, you'd need another row or a separate figure.
-                # For now, this layout shows GT, Noisy, U-Net Denoised, U-Net Residual, DnCNN Denoised.
-                # The 6th slot (axes[0,2]) is free.
-
-                plt.tight_layout(rect=[0, 0.03, 1, 0.95]) # Adjust layout to make space for suptitle
-                fig_eval.suptitle(f"N2I Evaluation Comparison - Phantom {i+1}", fontsize=16)
-                save_current_plot(fig_eval, f"eval_n2i_comparison_phantom_{i+1}")
+                    axes[1, 2].imshow(np.zeros_like(current_fbp_gt), **common_kwargs)
+                    axes[1, 2].set_title("Denoised by DnCNN (Missing)")
+                    axes[1, 2].axis('off')
+                
+                plt.tight_layout()
+                plt.suptitle("Visual Comparison of Denoising Results", fontsize=16)
+                plt.subplots_adjust(top=0.92)
                 plt.show()
-
-                # Separate plot for DnCNN residual if it exists
-                if args.plot_data and residual_dncnn_img is not None:
-                    fig_res_dncnn = plt.figure(figsize=(5,5))
-                    res_abs_max_dncnn = np.max(np.abs(residual_dncnn_img))
-                    plt.imshow(residual_dncnn_img, cmap='coolwarm', vmin=-res_abs_max_dncnn, vmax=res_abs_max_dncnn)
-                    plt.title(f"DnCNN Residual - Phantom {i+1}")
-                    plt.axis('off'); plt.colorbar()
-                    save_current_plot(fig_res_dncnn, f"eval_dncnn_residual_phantom_{i+1}")
+                
+                # Create a separate residual comparison plot if both residuals exist
+                if residual_unet_img is not None and residual_dncnn_img is not None:
+                    plt.figure(figsize=(10, 4))
+                    plt.subplot(1, 2, 1)
+                    plt.imshow(residual_unet_img, cmap='coolwarm', 
+                              vmin=-0.3*np.max(current_fbp_gt), vmax=0.3*np.max(current_fbp_gt))
+                    plt.title("Residual (U-Net - GT)")
+                    plt.axis('off')
+                    plt.colorbar()
+                    
+                    plt.subplot(1, 2, 2)
+                    plt.imshow(residual_dncnn_img, cmap='coolwarm', 
+                              vmin=-0.3*np.max(current_fbp_gt), vmax=0.3*np.max(current_fbp_gt))
+                    plt.title("Residual (DnCNN - GT)")
+                    plt.axis('off')
+                    plt.colorbar()
+                    
+                    plt.tight_layout()
+                    plt.show()
+                
+                # Create individual plots for both models if available
+                if denoised_unet_n2i_output is not None:
+                    fig_unet, ax_unet = plt.subplots(1, 3, figsize=(15, 5))
+                    ax_unet[0].imshow(current_fbp_gt, **common_kwargs)
+                    ax_unet[0].set_title("Ground Truth FBP")
+                    ax_unet[0].axis('off')
+                    
+                    ax_unet[1].imshow(current_fbp_noisy_for_comparison, **common_kwargs)
+                    ax_unet[1].set_title("Noisy FBP")
+                    ax_unet[1].axis('off')
+                    
+                    ax_unet[2].imshow(denoised_unet_n2i_output, **common_kwargs)
+                    ax_unet[2].set_title("U-Net Denoised")
+                    ax_unet[2].axis('off')
+                    
+                    plt.tight_layout()
+                    plt.suptitle("U-Net Denoising Results", fontsize=14)
+                    plt.subplots_adjust(top=0.85)
+                    plt.show()
+                
+                if denoised_dncnn_n2i_output is not None:
+                    fig_dncnn, ax_dncnn = plt.subplots(1, 3, figsize=(15, 5))
+                    ax_dncnn[0].imshow(current_fbp_gt, **common_kwargs)
+                    ax_dncnn[0].set_title("Ground Truth FBP")
+                    ax_dncnn[0].axis('off')
+                    
+                    ax_dncnn[1].imshow(current_fbp_noisy_for_comparison, **common_kwargs)
+                    ax_dncnn[1].set_title("Noisy FBP")
+                    ax_dncnn[1].axis('off')
+                    
+                    ax_dncnn[2].imshow(denoised_dncnn_n2i_output, **common_kwargs)
+                    ax_dncnn[2].set_title("DnCNN Denoised")
+                    ax_dncnn[2].axis('off')
+                    
+                    plt.tight_layout()
+                    plt.suptitle("DnCNN Denoising Results", fontsize=14)
+                    plt.subplots_adjust(top=0.85)
                     plt.show()
 
 
     print("\nScript finished.")
     if args.action == 'generate_data': print(f"Data generation complete. Files saved in {args.data_save_path}")
-    print(f"Plots saved in {PLOT_SAVE_DIR}")
     print("If denoising is still suboptimal: try more epochs, more training phantoms, tune learning rate/batch size, or adjust K-splits for N2I.")
-
