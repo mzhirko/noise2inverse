@@ -1,4 +1,4 @@
-from phantom import generate_phantom
+from utils.phantom import generate_phantom
 import numpy as np
 import random
 from skimage.draw import ellipse, rectangle, polygon, disk

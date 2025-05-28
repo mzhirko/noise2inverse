@@ -4,7 +4,7 @@ import numpy as np
 from utils.metrics import calculate_metrics 
 import tqdm
 
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+DEVICE = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
 
 training_history = {} 
 
@@ -16,12 +16,12 @@ def train_model(model, dataloader, criterion, optimizer, num_epochs, model_name=
     epoch_ssims = []
 
     print(f"\n--- Training {model_name} ---")
-    epochs_pbar = tqdm(range(num_epochs), desc=f"Training {model_name} - Epochs")
+    epochs_pbar = tqdm.tqdm(range(num_epochs), desc=f"Training {model_name} - Epochs")
     for epoch in epochs_pbar:
         model.train()
         running_loss = 0.0
         
-        train_batches_pbar = tqdm(enumerate(dataloader), total=len(dataloader), desc=f"Epoch {epoch+1}/{num_epochs} - Training", leave=False)
+        train_batches_pbar = tqdm.tqdm(enumerate(dataloader), total=len(dataloader), desc=f"Epoch {epoch+1}/{num_epochs} - Training", leave=False)
         for i, (inputs, targets) in train_batches_pbar:
             inputs, targets = inputs.to(DEVICE), targets.to(DEVICE)
             optimizer.zero_grad()
