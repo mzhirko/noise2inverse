@@ -10,19 +10,19 @@ import argparse
 # Assuming these utils are in a 'utils' directory relative to this script
 from utils.models import UNet, DnCNN, REDNet
 from utils.prepare_data import create_phantom_dataset, ReconstructionDataset
-from utils.train import train_model, DEVICE
+from utils.train import train_model, DEVICE # Ensure train_model is the version that fits your call signature
 
 # --- Experiment Configuration ---
-N_VIEWS_LIST = [1024, 512, 256, 128]  # Still useful for choices and batch script
+N_VIEWS_LIST = [1024, 512, 256, 128]
 TOTAL_PHANTOMS_PER_VIEW_SETTING = 1000
 TRAIN_RATIO = 0.8
 VAL_RATIO = 0.1
 # TEST_RATIO is implicitly 1.0 - TRAIN_RATIO - VAL_RATIO
 
 NOISE_LEVEL = 0.05
-K_SPLITS_NOISE2INVERSE = 4  # Used in create_phantom_dataset
+K_SPLITS_NOISE2INVERSE = 4
 
-LEARNING_RATE = 1e-3
+LEARNING_RATE = 1e-4
 NUM_EPOCHS = 10
 BATCH_SIZE = 16
 
@@ -44,7 +44,9 @@ def run_experiment(model_type_arg: str, n_views_arg: int):
     if os.path.exists(dataset_path):
         print(f"Loading existing dataset: {dataset_path}")
         try:
-            full_dataset_list = torch.load(dataset_path)
+            # MODIFIED LINE: Added weights_only=False
+            full_dataset_list = torch.load(dataset_path, weights_only=False)
+            
             if not isinstance(full_dataset_list, list) or not full_dataset_list:
                 print(f"Loaded dataset from {dataset_path} is invalid or empty. Regenerating.")
                 full_dataset_list = None # Force regeneration
@@ -70,20 +72,31 @@ def run_experiment(model_type_arg: str, n_views_arg: int):
             torch.save(full_dataset_list, dataset_path)
         except Exception as e:
             print(f"Error saving dataset to {dataset_path}: {e}.")
-            # Decide if you want to proceed with the in-memory dataset or stop
-            # For now, we'll proceed if saving fails but generation was successful.
-            # If saving is critical, you might want to return here.
+            # If saving fails, script proceeds with in-memory dataset for current run.
+            # Add 'return' here if saving is critical before proceeding.
+
+    # Additional check after loading or generation attempt
+    if full_dataset_list is None:
+        print(f"Dataset could not be loaded or generated for {n_views_arg} views. Aborting run for this configuration.")
+        return
+    
+    if not isinstance(full_dataset_list, list) or len(full_dataset_list) == 0:
+        print(f"Dataset for {n_views_arg} views is empty or invalid after loading/generation. Aborting.")
+        return
 
     num_total_samples = len(full_dataset_list)
     num_train = int(TRAIN_RATIO * num_total_samples)
     num_val = int(VAL_RATIO * num_total_samples)
     
+    if num_train == 0 or num_val == 0 or num_train + num_val > num_total_samples:
+        print(f"Insufficient data for train/val split. Total: {num_total_samples}, Train: {num_train}, Val: {num_val}. Adjust ratios or dataset size.")
+        return
+
     indices = np.random.permutation(num_total_samples)
     
     train_indices = indices[:num_train]
     val_indices = indices[num_train : num_train + num_val]
-    # test_indices = indices[num_train + num_val :] # Available if needed later
-
+    
     train_data_list = [full_dataset_list[i] for i in train_indices]
     val_data_list = [full_dataset_list[i] for i in val_indices]
     
@@ -112,38 +125,37 @@ def run_experiment(model_type_arg: str, n_views_arg: int):
     criterion = nn.MSELoss()
     optimizer = optim.Adam(current_model.parameters(), lr=LEARNING_RATE)
     
-    # Define save directory for this specific model and view setting
     save_directory = os.path.join(TRAINED_MODELS_BASE_DIR, f"views_{n_views_arg}", model_type_arg)
     if not os.path.exists(save_directory):
         os.makedirs(save_directory, exist_ok=True)
     
-    # Model will be saved as: trained_models/views_{n_views}/{model_type}/{model_type}_views_{n_views}.pth
     model_save_name_stem = f"{model_type_arg}_views_{n_views_arg}" 
 
+    # Assuming train_model is the version that takes train_dataloader, val_dataloader
+    # and returns three lists: train_losses, val_psnrs, val_ssims
     epoch_losses, epoch_psnrs, epoch_ssims = train_model(
         model=current_model,
-        dataloader=train_loader, # Should be train_loader, val_loader can be passed if train_model supports it for validation
-        val_dataloader=val_loader, # Assuming train_model can take val_loader
+        train_dataloader=train_loader, # Changed 'dataloader' to 'train_dataloader' for clarity in call
+        val_dataloader=val_loader,
         criterion=criterion,
         optimizer=optimizer,
         num_epochs=NUM_EPOCHS,
-        model_name=model_save_name_stem, # train_model will append .pth
-        save_path=save_directory # Directory where model is saved
+        model_name=model_save_name_stem,
+        save_path=save_directory
     )
     print(f"Finished training {model_type_arg} for {n_views_arg} views.")
     print(f"Model saved in directory: {save_directory}")
 
     # --- Save Training History ---
-    # CSV will be saved as: trained_models/views_{n_views}/{model_type}/{model_type}_views_{n_views}_training_history.csv
     history_csv_filename = f"{model_save_name_stem}_training_history.csv"
     history_csv_path = os.path.join(save_directory, history_csv_filename)
     
     try:
         with open(history_csv_path, 'w', newline='') as csvfile:
             history_writer = csv.writer(csvfile)
-            history_writer.writerow(['Epoch', 'Loss', 'PSNR', 'SSIM']) # Assuming these are training metrics
-            # If train_model returns validation metrics as well, you might want to log them
-            for epoch_num in range(len(epoch_losses)): # Use len(epoch_losses) in case of early stopping
+            # Assuming epoch_losses = train_loss, epoch_psnrs = val_psnr, epoch_ssims = val_ssim
+            history_writer.writerow(['Epoch', 'Train_Loss', 'Val_PSNR', 'Val_SSIM'])
+            for epoch_num in range(len(epoch_losses)):
                 history_writer.writerow([
                     epoch_num + 1, 
                     epoch_losses[epoch_num], 
@@ -176,8 +188,5 @@ if __name__ == '__main__':
     if args.n_views not in N_VIEWS_LIST:
         print(f"Warning: {args.n_views} is not in the predefined N_VIEWS_LIST {N_VIEWS_LIST}.")
         # Allow proceeding, but warn the user.
-        # Alternatively, make it an error:
-        # print(f"Error: Invalid number of views. Choose from {N_VIEWS_LIST}.")
-        # exit(1)
 
     run_experiment(model_type_arg=args.model_type, n_views_arg=args.n_views)
