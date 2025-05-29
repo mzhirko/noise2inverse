@@ -30,8 +30,8 @@ def train_model(model, dataloader, criterion, optimizer, num_epochs, model_name=
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
-            if (i + 1) % (max(1, len(dataloader) // 5)) == 0: # Keep existing print for batch loss
-                 print(f"Epoch [{epoch+1}/{num_epochs}], Batch [{i+1}/{len(dataloader)}], Training Loss: {loss.item():.6f}")
+            #  if (i + 1) % (max(1, len(dataloader) // 5)) == 0: # Keep existing print for batch loss
+            #     print(f"Epoch [{epoch+1}/{num_epochs}], Batch [{i+1}/{len(dataloader)}], Training Loss: {loss.item():.6f}")
             train_batches_pbar.set_postfix(loss=loss.item())
         
         epoch_avg_loss = running_loss / len(dataloader)
@@ -42,7 +42,7 @@ def train_model(model, dataloader, criterion, optimizer, num_epochs, model_name=
         current_epoch_ssim_sum = 0.0
         num_batches_for_metrics = 0
 
-        metrics_batches_pbar = tqdm(dataloader, total=len(dataloader), desc=f"Epoch {epoch+1}/{num_epochs} - Eval Metrics", leave=False)
+        metrics_batches_pbar = tqdm.tqdm(dataloader, total=len(dataloader), desc=f"Epoch {epoch+1}/{num_epochs} - Eval Metrics", leave=False)
         with torch.no_grad():
             for inputs_eval, targets_eval in metrics_batches_pbar: 
                 inputs_eval, targets_eval = inputs_eval.to(DEVICE), targets_eval.to(DEVICE)
@@ -75,7 +75,7 @@ def train_model(model, dataloader, criterion, optimizer, num_epochs, model_name=
         epoch_ssims.append(epoch_avg_ssim)
         
         epochs_pbar.set_postfix(loss=epoch_avg_loss, psnr=epoch_avg_psnr, ssim=epoch_avg_ssim)
-        print(f"Epoch [{epoch+1}/{num_epochs}], Avg Training Loss: {epoch_avg_loss:.6f}, Avg Training PSNR: {epoch_avg_psnr:.4f}, Avg Training SSIM: {epoch_avg_ssim:.4f}")
+        
     
     if not os.path.exists(save_path):
         os.makedirs(save_path)
