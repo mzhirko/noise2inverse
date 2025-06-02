@@ -42,7 +42,7 @@ class UNet(nn.Module):
         return self.out_conv(d1)
 
 class DnCNN(nn.Module):
-    def __init__(self, in_channels, out_channels, num_layers=17, num_features=64):
+    def __init__(self, in_channels, out_channels, num_layers=5, num_features=80):
         super(DnCNN, self).__init__()
         layers = []
         layers.append(nn.Conv2d(in_channels, num_features, kernel_size=3, padding=1, bias=True))

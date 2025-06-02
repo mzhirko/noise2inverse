@@ -4,27 +4,25 @@ import numpy as np
 from utils.metrics import calculate_metrics # Assuming this utility is available
 import tqdm
 
-DEVICE = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
+DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 def train_model(model, train_dataloader, val_dataloader, criterion, optimizer, num_epochs, model_name="Model", save_path="./checkpoints"):
     model.to(DEVICE)
     
     train_epoch_losses = []
-    val_epoch_psnrs = [] # These will store validation PSNRs
-    val_epoch_ssims = [] # These will store validation SSIMs
+    val_epoch_psnrs = [] 
+    val_epoch_ssims = [] 
     
-    # This list is for internal use (e.g., progress bar), not part of the primary 3-tuple return
     calculated_val_epoch_losses = [] 
 
     print(f"\n--- Training {model_name} ---")
     epochs_pbar = tqdm.tqdm(range(num_epochs), desc=f"Training {model_name} - Epochs")
     for epoch in epochs_pbar:
-        # --- Training Phase ---
         model.train()
         running_train_loss = 0.0
         
         train_batches_pbar = tqdm.tqdm(enumerate(train_dataloader), total=len(train_dataloader), desc=f"Epoch {epoch+1}/{num_epochs} - Training", leave=False)
-        for i, (inputs, targets) in train_batches_pbar:
+        for i, (inputs, targets, _) in train_batches_pbar:
             inputs, targets = inputs.to(DEVICE), targets.to(DEVICE)
             optimizer.zero_grad()
             outputs = model(inputs)
@@ -37,7 +35,6 @@ def train_model(model, train_dataloader, val_dataloader, criterion, optimizer, n
         epoch_avg_train_loss = running_train_loss / len(train_dataloader)
         train_epoch_losses.append(epoch_avg_train_loss)
 
-        # --- Validation Phase (assuming val_dataloader is always present) ---
         model.eval()
         running_val_loss = 0.0
         current_epoch_val_psnr_sum = 0.0
@@ -46,23 +43,23 @@ def train_model(model, train_dataloader, val_dataloader, criterion, optimizer, n
 
         val_batches_pbar = tqdm.tqdm(val_dataloader, total=len(val_dataloader), desc=f"Epoch {epoch+1}/{num_epochs} - Validation", leave=False)
         with torch.no_grad():
-            for inputs_val, targets_val in val_batches_pbar: 
-                inputs_val, targets_val = inputs_val.to(DEVICE), targets_val.to(DEVICE)
+            for inputs_val, targets_val, originals_val in val_batches_pbar: 
+                inputs_val, targets_val, originals_val = inputs_val.to(DEVICE), targets_val.to(DEVICE), originals_val.to(DEVICE)
                 outputs_val = model(inputs_val)
 
-                val_loss = criterion(outputs_val, targets_val)
+                val_loss = criterion(outputs_val, targets_val) # Loss is calculated against the model's direct target
                 running_val_loss += val_loss.item()
 
                 outputs_np = outputs_val.detach().cpu().numpy()
-                targets_np = targets_val.detach().cpu().numpy()
+                originals_np = originals_val.detach().cpu().numpy() # Use original phantom/image for metrics
                 
                 batch_psnr_sum = 0
                 batch_ssim_sum = 0
                 for j in range(outputs_np.shape[0]): 
                     img_out = np.squeeze(outputs_np[j]) 
-                    img_tgt = np.squeeze(targets_np[j]) 
+                    img_tgt = np.squeeze(originals_np[j]) # Compare output to original phantom/image
                     img_out = np.clip(img_out, 0.0, 1.0)
-                    img_tgt = np.clip(img_tgt, 0.0, 1.0)
+                    img_tgt = np.clip(img_tgt, 0.0, 1.0) # Ensure original is also clipped if necessary for consistent data_range
                     psnr, ssim = calculate_metrics(img_tgt, img_out, data_range=1.0, win_size=7) 
                     batch_psnr_sum += psnr
                     batch_ssim_sum += ssim
@@ -75,9 +72,9 @@ def train_model(model, train_dataloader, val_dataloader, criterion, optimizer, n
         epoch_avg_val_psnr = current_epoch_val_psnr_sum / num_val_batches if num_val_batches > 0 else float('nan')
         epoch_avg_val_ssim = current_epoch_val_ssim_sum / num_val_batches if num_val_batches > 0 else float('nan')
         
-        calculated_val_epoch_losses.append(epoch_avg_val_loss) # Stored for progress bar
-        val_epoch_psnrs.append(epoch_avg_val_psnr) # This is returned
-        val_epoch_ssims.append(epoch_avg_val_ssim) # This is returned
+        calculated_val_epoch_losses.append(epoch_avg_val_loss) 
+        val_epoch_psnrs.append(epoch_avg_val_psnr) 
+        val_epoch_ssims.append(epoch_avg_val_ssim) 
         
         epochs_pbar.set_postfix(
             train_loss=f"{epoch_avg_train_loss:.4f}", 

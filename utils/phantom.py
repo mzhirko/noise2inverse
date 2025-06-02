@@ -3,7 +3,7 @@ import random
 from skimage.draw import ellipse, rectangle, polygon, disk
 import matplotlib.pyplot as plt
 
-PHANTOM_SIZE_XY = 512
+PHANTOM_SIZE_XY = 256
 
 def _can_place_disk(r_candidate, c_candidate, rad_candidate, size, placed_disks):
     if not (r_candidate - rad_candidate >= 0 and \
@@ -101,15 +101,3 @@ def generate_phantom(size=PHANTOM_SIZE_XY):
                 break
                 
     return np.clip(phantom, 0, 1.5)
-
-# # Generate the phantom
-# generated_phantom_image = generate_phantom()
-
-# # Display the phantom
-# plt.figure(figsize=(6,6))
-# plt.imshow(generated_phantom_image, cmap='gray')
-# plt.colorbar(label='Intensity')
-# plt.title(f"Generated Phantom ({PHANTOM_SIZE_XY}x{PHANTOM_SIZE_XY})")
-# plt.xlabel("X-coordinate")
-# plt.ylabel("Y-coordinate")
-# plt.show()

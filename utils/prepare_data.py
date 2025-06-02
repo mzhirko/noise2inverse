@@ -8,6 +8,7 @@ import torch
 from collections import defaultdict
 import os
 from torch.utils.data import Dataset
+from skimage.transform import resize
 
 def create_sinogram(phantom, n_views):
     n_rows, n_cols = phantom.shape
@@ -104,10 +105,10 @@ def create_phantom_dataset(n, n_views, noise_level, k_splits=2):
         phantom_img = generate_phantom() # Assumes generate_phantom() creates a 2D numpy array
         input_img, target_img = prepare_training_data(phantom_img, k=k_splits, n_views=n_views, noise_level=noise_level)
         if input_img is not None and target_img is not None:
-            dataset.append({'input': input_img, 'target': target_img, 'original_phantom': phantom_img})
+            dataset.append({'input': input_img, 'target': target_img, 'original_image': phantom_img})
     return dataset
 
-def create_images_dataset(image_folder_path, n_views, noise_level, k_splits=2):
+def create_images_dataset(image_folder_path, target_size_n, n_views, noise_level, k_splits=2):
     dataset = []
     if not os.path.isdir(image_folder_path):
         print(f"Error: Provided path '{image_folder_path}' is not a valid directory.")
@@ -115,18 +116,34 @@ def create_images_dataset(image_folder_path, n_views, noise_level, k_splits=2):
 
     for filename in os.listdir(image_folder_path):
         file_path = os.path.join(image_folder_path, filename)
-        img_data = plt.imread(file_path)
-        if img_data.ndim == 3:
-            img_data = np.mean(img_data[...,:3], axis=2) 
-        
-        img_data = img_data.astype(np.float32) # Ensure correct dtype for ASTRA
-        
-        if np.max(img_data) > 1.0: # Basic check
-            img_data = img_data / 255.0
+        try:
+            img_data = plt.imread(file_path)
+
+            # Grayscale conversion
+            if img_data.ndim == 3:
+                if img_data.shape[-1] == 4:  
+                    img_data = img_data[..., :3]  
+                if img_data.shape[-1] == 3:  
+                    img_data = np.mean(img_data, axis=2)
+            elif img_data.ndim == 2:
+                pass 
             
-        input_img, target_img = prepare_training_data(img_data, k=k_splits, n_views=n_views, noise_level=noise_level)
-        if input_img is not None and target_img is not None:
-            dataset.append({'input': input_img, 'target': target_img, 'original_image': img_data})
+            img_resized = resize(img_data, 
+                                    (target_size_n, target_size_n), 
+                                    anti_aliasing=True)
+
+            img_processed = img_resized.astype(np.float32)
+            
+            if np.max(img_processed) > 1.0 + 1e-6:
+                img_processed = img_processed / 255.0
+                
+            img_final = np.clip(img_processed, 0.0, 1.0)
+            
+            input_img, target_img = prepare_training_data(img_final, k=k_splits, n_views=n_views, noise_level=noise_level)
+            if input_img is not None and target_img is not None:
+                dataset.append({'input': input_img, 'target': target_img, 'original_image': img_final})
+        except Exception as e:
+            print(f"Skipping file {filename} due to an error during processing: {e}")
             
     return dataset
 
@@ -142,16 +159,19 @@ class ReconstructionDataset(Dataset):
         sample = self.data_list[idx]
         input_image = sample['input']
         target_image = sample['target']
+        original_data = sample['original_image']
 
         if self.transform:
             input_image = self.transform(input_image)
             target_image = self.transform(target_image)
+            original_data = self.transform(original_data)
             
-        # Add channel dimension if images are 2D (H, W) -> (1, H, W)
         if input_image.ndim == 2:
             input_image = np.expand_dims(input_image, axis=0)
         if target_image.ndim == 2:
             target_image = np.expand_dims(target_image, axis=0)
+        if original_data.ndim == 2:
+            original_data = np.expand_dims(original_data, axis=0)
 
-        return torch.from_numpy(input_image.copy()), torch.from_numpy(target_image.copy())
+        return torch.from_numpy(input_image.copy()), torch.from_numpy(target_image.copy()), torch.from_numpy(original_data.copy())
 
