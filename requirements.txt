@@ -1,0 +1,6 @@
+scikit-image
+tqdm
+matplotlib
+pandas
+
+# conda install -y -c astra-toolbox astra-toolbox

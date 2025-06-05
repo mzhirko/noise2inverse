@@ -10,9 +10,10 @@ from utils.experiment import run_experiment
 # --- Script Configuration ---
 DEFAULT_IMAGES_DIR = '/local/s4283341/cito/CT_dataset'
 DEFAULT_PROCESSED_DATA_DIR = "/local/s4283341/cito/processed_image_datasets"
-N_VIEWS_LIST = [360, 120, 40]
-NOISE_LEVEL = 0.01
+N_VIEWS_LIST = [1024, 512, 256]
+NOISE_LEVEL = 0.05
 K_SPLITS_NOISE2INVERSE = 4
+trained_models_base_dir = "/local/s4283341/cito/trained_models_images"
 
 np.random.seed(42)
 torch.manual_seed(42)
@@ -106,6 +107,12 @@ if __name__ == '__main__':
         default=DEFAULT_PROCESSED_DATA_DIR,
         help=f"Directory to load/save processed image datasets (.pt files). Default: {DEFAULT_PROCESSED_DATA_DIR}"
     )
+    parser.add_argument(
+        "--trained_models_base_dir",
+        type=str,
+        default=trained_models_base_dir,
+        help=f"Directory to save trained_models and results Default: {trained_models_base_dir}"
+    )
     
     args = parser.parse_args()
 
@@ -121,7 +128,8 @@ if __name__ == '__main__':
         run_experiment(
             model_type_arg=args.model_type, 
             n_views_arg=args.n_views,
-            full_dataset_list=dataset
+            full_dataset_list=dataset,
+            trained_models_base_dir=args.trained_models_base_dir
         )
     else:
         print(f"Could not load or generate dataset for {args.n_views} views, size {args.image_size} from {args.images_dir}. Exiting.")

@@ -4,7 +4,7 @@ import numpy as np
 from utils.metrics import calculate_metrics # Assuming this utility is available
 import tqdm
 
-DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+DEVICE = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
 
 def train_model(model, train_dataloader, val_dataloader, criterion, optimizer, num_epochs, model_name="Model", save_path="./checkpoints"):
     model.to(DEVICE)

@@ -14,7 +14,7 @@ import torchvision.utils as vutils
 
 DEFAULT_TRAIN_RATIO = 0.8
 DEFAULT_VAL_RATIO = 0.1
-DEFAULT_BATCH_SIZE = 12
+DEFAULT_BATCH_SIZE = 16
 DEFAULT_NUM_EPOCHS = 100
 DEFAULT_TRAINED_MODELS_BASE_DIR = "/local/s4283341/cito/trained_models"
 DEFAULT_LEARNING_RATE = 5e-4
@@ -208,7 +208,7 @@ def run_experiment(
         evaluate_model(
             model=current_model,
             test_loader=test_loader,
-            designated_dir=evaluation_designated_dir,
+            evaluation_dir=evaluation_designated_dir,
             device=DEVICE,
             model_type_arg=model_type_arg,
             n_views_arg=n_views_arg
