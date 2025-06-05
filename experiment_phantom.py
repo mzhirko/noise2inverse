@@ -8,12 +8,11 @@ from utils.experiment import run_experiment
 # --- Experiment Configuration ---
 N_VIEWS_LIST = [360, 120, 40]
 TOTAL_PHANTOMS_PER_VIEW_SETTING = 1000
-# TEST_RATIO is implicitly 1.0 - TRAIN_RATIO - VAL_RATIO
 
 np.random.seed(42)
 torch.manual_seed(42)
 
-NOISE_LEVEL = 0.01
+NOISE_LEVEL = 0.05
 K_SPLITS_NOISE2INVERSE = 4
 PHANTOM_DATASET_DIR = "/local/s4283341/cito/phantom_datasets"
 
