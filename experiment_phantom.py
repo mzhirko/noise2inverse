@@ -7,7 +7,7 @@ from utils.experiment import run_experiment
 
 # --- Experiment Configuration ---
 N_VIEWS_LIST = [1024, 512, 256]
-TOTAL_PHANTOMS_PER_VIEW_SETTING = 10
+TOTAL_PHANTOMS_PER_VIEW_SETTING = 1000
 
 np.random.seed(42)
 torch.manual_seed(42)
