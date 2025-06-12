@@ -8,15 +8,58 @@ from utils.prepare_data import create_images_dataset, ReconstructionDataset
 from utils.experiment import run_experiment
 
 # --- Script Configuration ---
-DEFAULT_IMAGES_DIR = '/local/s4283341/cito/CT_dataset'
-DEFAULT_PROCESSED_DATA_DIR = "/local/s4283341/cito/processed_image_datasets"
+DEFAULT_IMAGES_DIR = './CT_dataset'
+DEFAULT_PROCESSED_DATA_DIR = "./processed_image_datasets"
 N_VIEWS_LIST = [1024, 512, 256]
 NOISE_LEVEL = 0.05
 K_SPLITS_NOISE2INVERSE = 4
-trained_models_base_dir = "/local/s4283341/cito/trained_models_images"
+trained_models_base_dir = "./trained_models_images"
 
 np.random.seed(42)
 torch.manual_seed(42)
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Run CT Image Reconstruction Experiment on Image Datasets.")
+    parser.add_argument(
+        "-m", "--model_type",
+        type=str,
+        required=True,
+        choices=["UNet", "DnCNN", "REDNet"], # Assuming these are still the relevant choices
+        help="Type of model to train (UNet, DnCNN, REDNet)."
+    )
+    parser.add_argument(
+        "-v", "--n_views",
+        type=int,
+        required=True,
+        help=f"Number of views for sinogram generation. Recommended from: {N_VIEWS_LIST}."
+    )
+    parser.add_argument(
+        "--image_size",
+        type=int,
+        required=True,
+        help="Target size 'n' to resize images to (n x n)."
+    )
+    parser.add_argument(
+        "--images_dir",
+        type=str,
+        default=DEFAULT_IMAGES_DIR,
+        help=f"Directory containing the input images. Default: {DEFAULT_IMAGES_DIR}"
+    )
+    parser.add_argument(
+        "--processed_data_dir",
+        type=str,
+        default=DEFAULT_PROCESSED_DATA_DIR,
+        help=f"Directory to load/save processed image datasets (.pt files). Default: {DEFAULT_PROCESSED_DATA_DIR}"
+    )
+    parser.add_argument(
+        "--trained_models_base_dir",
+        type=str,
+        default=trained_models_base_dir,
+        help=f"Directory to save trained_models and results Default: {trained_models_base_dir}"
+    )
+    
+    args = parser.parse_args()
+    return args
 
 def load_images_dataset(
     n_views_arg: int,
@@ -75,46 +118,7 @@ def load_images_dataset(
     return full_dataset_list
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Run CT Image Reconstruction Experiment on Image Datasets.")
-    parser.add_argument(
-        "-m", "--model_type",
-        type=str,
-        required=True,
-        choices=["UNet", "DnCNN", "REDNet"], # Assuming these are still the relevant choices
-        help="Type of model to train (UNet, DnCNN, REDNet)."
-    )
-    parser.add_argument(
-        "-v", "--n_views",
-        type=int,
-        required=True,
-        help=f"Number of views for sinogram generation. Recommended from: {N_VIEWS_LIST}."
-    )
-    parser.add_argument(
-        "--image_size",
-        type=int,
-        required=True,
-        help="Target size 'n' to resize images to (n x n)."
-    )
-    parser.add_argument(
-        "--images_dir",
-        type=str,
-        default=DEFAULT_IMAGES_DIR,
-        help=f"Directory containing the input images. Default: {DEFAULT_IMAGES_DIR}"
-    )
-    parser.add_argument(
-        "--processed_data_dir",
-        type=str,
-        default=DEFAULT_PROCESSED_DATA_DIR,
-        help=f"Directory to load/save processed image datasets (.pt files). Default: {DEFAULT_PROCESSED_DATA_DIR}"
-    )
-    parser.add_argument(
-        "--trained_models_base_dir",
-        type=str,
-        default=trained_models_base_dir,
-        help=f"Directory to save trained_models and results Default: {trained_models_base_dir}"
-    )
-    
-    args = parser.parse_args()
+    args = parse_args()
 
     dataset = load_images_dataset(
         n_views_arg=args.n_views,

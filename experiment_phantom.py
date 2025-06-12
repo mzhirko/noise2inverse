@@ -6,15 +6,39 @@ from utils.prepare_data import create_phantom_dataset
 from utils.experiment import run_experiment
 
 # --- Experiment Configuration ---
-N_VIEWS_LIST = [360, 120, 40]
-TOTAL_PHANTOMS_PER_VIEW_SETTING = 1000
+N_VIEWS_LIST = [1024, 512, 256]
+TOTAL_PHANTOMS_PER_VIEW_SETTING = 10
 
 np.random.seed(42)
 torch.manual_seed(42)
 
 NOISE_LEVEL = 0.05
 K_SPLITS_NOISE2INVERSE = 4
-PHANTOM_DATASET_DIR = "/local/s4283341/cito/phantom_datasets"
+PHANTOM_DATASET_DIR = "./phantom_datasets"
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Run CT Image Reconstruction Experiment.")
+    parser.add_argument(
+        "-m", "--model_type",
+        type=str,
+        required=True,
+        choices=["UNet", "DnCNN", "REDNet"],
+        help="Type of model to train (UNet, DnCNN, REDNet)."
+    )
+    parser.add_argument(
+        "-v", "--n_views",
+        type=int,
+        required=True,
+        help=f"Number of views for the dataset. Recommended from: {N_VIEWS_LIST}."
+    )
+    parser.add_argument(
+        "--dataset_dir",
+        type=str,
+        default=PHANTOM_DATASET_DIR,
+        help="Directory to load/save phantom datasets."
+    )
+    args = parser.parse_args()
+    return args
 
 def load_phantom_dataset(
     n_views_arg: int,
@@ -73,27 +97,7 @@ def load_phantom_dataset(
     return full_dataset_list
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Run CT Image Reconstruction Experiment.")
-    parser.add_argument(
-        "-m", "--model_type",
-        type=str,
-        required=True,
-        choices=["UNet", "DnCNN", "REDNet"],
-        help="Type of model to train (UNet, DnCNN, REDNet)."
-    )
-    parser.add_argument(
-        "-v", "--n_views",
-        type=int,
-        required=True,
-        help=f"Number of views for the dataset. Recommended from: {N_VIEWS_LIST}."
-    )
-    parser.add_argument(
-        "--dataset_dir",
-        type=str,
-        default=PHANTOM_DATASET_DIR,
-        help="Directory to load/save phantom datasets."
-    )
-    args = parser.parse_args()
+    args = parse_args()
 
     dataset = load_phantom_dataset(n_views_arg=args.n_views, phantom_dataset_dir=args.dataset_dir)
 

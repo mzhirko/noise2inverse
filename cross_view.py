@@ -19,12 +19,19 @@ args = parser.parse_args()
 model = DnCNN(in_channels=1, out_channels=1)
 
 # Define the paths to your trained models
-models_paths = [
-    "/data/s4283341/phantom_DnCNN_256/dncnn_views_256_trained.pth",
-    "/data/s4283341/phantom_DnCNN_512/dncnn_views_512_trained.pth",
-    "/data/s4283341/phantom_DnCNN_1024/dncnn_views_1024_trained.pth"
+phantom_models_paths = [
+    "./trained_models/views_1024/DnCNN/dncnn_views_1024_trained.pth",
+    "./trained_models/views_512/DnCNN/dncnn_views_512_trained.pth",
+    "./trained_models/views_256/DnCNN/dncnn_views_256_trained.pth"
 ]
 
+CT_models_paths = [
+    "./trained_models_images/views_1024/DnCNN/dncnn_views_1024_trained.pth",
+    "./trained_models_images/views_512/DnCNN/dncnn_views_512_trained.pth",
+    "./trained_models_images/views_256/DnCNN/dncnn_views_256_trained.pth"
+]
+
+models_paths = phantom_models_paths if args.phantom else CT_models_paths
 # Generate or load the test image
 if args.phantom:
     # Use the generated phantom
@@ -32,7 +39,7 @@ if args.phantom:
     image_source = "Generated Phantom"
 else:
     # Randomly pick an image from the CT dataset
-    ct_dataset_path = "/local/s4283341/cito/CT_dataset"
+    ct_dataset_path = "./CT_dataset"
     
     # Find all image files (assuming common formats)
     image_patterns = ['*.png', '*.jpg', '*.jpeg', '*.tiff', '*.tif', '*.bmp']

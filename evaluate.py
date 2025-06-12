@@ -20,25 +20,38 @@ parser.add_argument('-m', '--model', choices=['DnCNN', 'UNet'], default='DnCNN',
 args = parser.parse_args()
 
 # Define the paths to your trained models
-DnCNN_models_paths = [
-    "/data/s4283341/phantom_DnCNN_256/dncnn_views_256_trained.pth",
-    "/data/s4283341/phantom_DnCNN_512/dncnn_views_512_trained.pth",
-    "/data/s4283341/phantom_DnCNN_1024/dncnn_views_1024_trained.pth"
+
+UNet_phantom_models_paths = [
+    "./trained_models/views_1024/UNet/unet_views_1024_trained.pth",
+    "./trained_models/views_512/UNet/unet_views_512_trained.pth",
+    "./trained_models/views_256/UNet/unet_views_256_trained.pth"
 ]
 
-UNet_models_paths = [
-    "/data/s4283341/phantom_UNet_256/unet_views_256_trained.pth",
-    "/data/s4283341/phantom_UNet_512/unet_views_512_trained.pth",
-    "/data/s4283341/phantom_UNet_1024/unet_views_1024_trained.pth"
+UNet_CT_models_paths = [
+    "./trained_models_images/views_1024/UNet/unet_views_1024_trained.pth",
+    "./trained_models_images/views_512/UNet/unet_views_512_trained.pth",
+    "./trained_models_images/views_256/UNet/unet_views_256_trained.pth"
+]
+
+DnCNN_phantom_models_paths = [
+    "./trained_models/views_1024/DnCNN/dncnn_views_1024_trained.pth",
+    "./trained_models/views_512/DnCNN/dncnn_views_512_trained.pth",
+    "./trained_models/views_256/DnCNN/dncnn_views_256_trained.pth"
+]
+
+DnCNN_CT_models_paths = [
+    "./trained_models_images/views_1024/DnCNN/dncnn_views_1024_trained.pth",
+    "./trained_models_images/views_512/DnCNN/dncnn_views_512_trained.pth",
+    "./trained_models_images/views_256/DnCNN/dncnn_views_256_trained.pth"
 ]
 
 # Select model paths and initialize model based on argument
 if args.model == 'DnCNN':
-    models_paths = DnCNN_models_paths
+    models_paths = DnCNN_phantom_models_paths if args.phantom else DnCNN_CT_models_paths
     model = DnCNN(in_channels=1, out_channels=1)
     model_arch_name = "DnCNN"
 elif args.model == 'UNet':
-    models_paths = UNet_models_paths
+    models_paths = UNet_phantom_models_paths if args.phantom else UNet_CT_models_paths
     model = UNet(in_channels=1, out_channels=1)
     model_arch_name = "UNet"
 
@@ -52,7 +65,7 @@ if args.phantom:
     image_source = "Generated Phantom"
 else:
     # Randomly pick an image from the CT dataset
-    ct_dataset_path = "/local/s4283341/cito/CT_dataset"
+    ct_dataset_path = "./CT_dataset"
     
     # Find all image files (assuming common formats)
     image_patterns = ['*.png', '*.jpg', '*.jpeg', '*.tiff', '*.tif', '*.bmp']
