@@ -56,38 +56,3 @@ class DnCNN(nn.Module):
     def forward(self, x):
         residual = self.dncnn(x)
         return x - residual
-
-class REDNet(nn.Module):
-    def __init__(self, in_channels, out_channels, num_layers=5, num_features=64):
-        super(REDNet, self).__init__()
-        self.num_layers = num_layers
-        self.relu = nn.ReLU(inplace=True)
-
-        self.conv_layers = nn.ModuleList()
-        self.deconv_layers = nn.ModuleList()
-
-        self.conv_layers.append(nn.Conv2d(in_channels, num_features, kernel_size=3, padding=1, bias=True))
-        for _ in range(num_layers - 1):
-            self.conv_layers.append(nn.Conv2d(num_features, num_features, kernel_size=3, padding=1, bias=True))
-
-        for _ in range(num_layers - 1):
-            self.deconv_layers.append(nn.ConvTranspose2d(num_features, num_features, kernel_size=3, padding=1, bias=True))
-        self.deconv_layers.append(nn.ConvTranspose2d(num_features, out_channels, kernel_size=3, padding=1, bias=True))
-
-    def forward(self, x):
-        encoder_outputs = []
-        h = x
-
-        for i in range(self.num_layers):
-            h = self.conv_layers[i](h)
-            h = self.relu(h)
-            if i < self.num_layers - 1:
-                encoder_outputs.append(h)
-
-        for i in range(self.num_layers):
-            h = self.deconv_layers[i](h)
-            if i < self.num_layers - 1:
-                skip_val = encoder_outputs[self.num_layers - 2 - i]
-                h = h + skip_val
-                h = self.relu(h)
-        return h
