@@ -43,12 +43,6 @@ python experiment_CT.py -m UNet -v 512 --image_size 256
 - `-v`: Number of projection views (`1024`, `512`, `256`)
 - `--image_size`: Target image size (256 for 256×256)
 
-### Hyperparameter Optimization
-```bash
-python hpo.py
-```
-Runs automated hyperparameter search for DnCNN with random sampling over learning rates, batch sizes, and network parameters.
-
 ## Model Evaluation
 
 Generate comparison grids showing input, reconstruction, and ground truth:

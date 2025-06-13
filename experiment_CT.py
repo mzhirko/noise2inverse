@@ -3,7 +3,6 @@ import os
 import numpy as np
 import argparse
 
-# Import user-defined utilities
 from utils.prepare_data import create_images_dataset, ReconstructionDataset
 from utils.experiment import run_experiment
 
@@ -15,16 +14,18 @@ NOISE_LEVEL = 0.05
 K_SPLITS_NOISE2INVERSE = 4
 trained_models_base_dir = "./trained_models_images"
 
+# Set seeds for reproducibility
 np.random.seed(42)
 torch.manual_seed(42)
 
 def parse_args():
+    """Parses command-line arguments for the experiment."""
     parser = argparse.ArgumentParser(description="Run CT Image Reconstruction Experiment on Image Datasets.")
     parser.add_argument(
         "-m", "--model_type",
         type=str,
         required=True,
-        choices=["UNet", "DnCNN", "REDNet"], # Assuming these are still the relevant choices
+        choices=["UNet", "DnCNN", "REDNet"],
         help="Type of model to train (UNet, DnCNN, REDNet)."
     )
     parser.add_argument(
@@ -63,14 +64,16 @@ def parse_args():
 
 def load_images_dataset(
     n_views_arg: int,
-    image_size_n_arg: int, # For resizing images to n x n
+    image_size_n_arg: int,
     images_base_dir_arg: str,
     processed_data_dir_arg: str
 ):
+    """Loads a pre-processed dataset or creates it if it doesn't exist."""
     print(f"Preparing image dataset for Views: {n_views_arg}, Size: {image_size_n_arg}x{image_size_n_arg}")
 
     os.makedirs(processed_data_dir_arg, exist_ok=True)
     
+    # Construct a unique filename for the dataset based on its parameters.
     dataset_filename_parts = [
         f"images_nviews{n_views_arg}",
         f"size{image_size_n_arg}",
@@ -81,15 +84,18 @@ def load_images_dataset(
     dataset_path = os.path.join(processed_data_dir_arg, dataset_filename)
 
     full_dataset_list = None
+    # If a pre-processed dataset file exists, load it.
     if os.path.exists(dataset_path):
         print(f"Loading existing processed image dataset: {dataset_path}")
-        full_dataset_list = torch.load(dataset_path, weights_only=False) # Set weights_only based on content
-        if not isinstance(full_dataset_list, list) or (not full_dataset_list and os.path.getsize(dataset_path) > 0): # check if empty list but file not empty
-                print(f"Loaded dataset from {dataset_path} is invalid (not a list or empty). Regenerating.")
+        full_dataset_list = torch.load(dataset_path, weights_only=False)
+        # Validate the loaded data; if it's not a list or seems invalid, trigger regeneration.
+        if not isinstance(full_dataset_list, list) or (not full_dataset_list and os.path.getsize(dataset_path) > 0):
+                print(f"Loaded dataset from {dataset_path} is invalid. Regenerating.")
                 full_dataset_list = None
-        elif not full_dataset_list: # Genuinely empty list from an empty file or intentional save
-                print(f"Loaded dataset from {dataset_path} is empty. Considering regeneration if source images exist.")
+        elif not full_dataset_list:
+                print(f"Loaded dataset from {dataset_path} is empty.")
             
+    # If the dataset was not loaded, generate it from the source images.
     if full_dataset_list is None:
         print(f"Generating processed image dataset from: {images_base_dir_arg}")
         full_dataset_list = create_images_dataset(
@@ -99,27 +105,25 @@ def load_images_dataset(
             noise_level=NOISE_LEVEL,
             k_splits=K_SPLITS_NOISE2INVERSE
         )
-
-        if not full_dataset_list: # Handles case where create_images_dataset returns empty or None
-            print(f"Failed to generate dataset from {images_base_dir_arg} for {n_views_arg} views, size {image_size_n_arg}. Cannot proceed.")
-            return None # Explicitly return None
-        
-        print(f"Saving generated image dataset to: {dataset_path}")
-        try:
+        # If dataset creation is successful, save it to a file for future use.
+        if full_dataset_list:
+            print(f"Saving generated image dataset to: {dataset_path}")
             torch.save(full_dataset_list, dataset_path)
-        except Exception as e:
-            print(f"Error saving dataset to {dataset_path}: {e}.")
+        else:
+            print(f"Failed to generate dataset from {images_base_dir_arg}.")
+            return None
 
-    if full_dataset_list is None: # Double check after potential generation/saving issues
-        print(f"Image dataset could not be loaded or generated for {n_views_arg} views, size {image_size_n_arg}. Aborting.")
+    if full_dataset_list is None:
+        print(f"Image dataset could not be loaded or generated. Aborting.")
         return None
     
-    print(f"Image dataset for {n_views_arg} views, size {image_size_n_arg} prepared successfully. Samples: {len(full_dataset_list)}")
+    print(f"Image dataset prepared successfully. Samples: {len(full_dataset_list)}")
     return full_dataset_list
 
 if __name__ == '__main__':
     args = parse_args()
 
+    # Load or generate the required dataset.
     dataset = load_images_dataset(
         n_views_arg=args.n_views,
         image_size_n_arg=args.image_size,
@@ -127,6 +131,7 @@ if __name__ == '__main__':
         processed_data_dir_arg=args.processed_data_dir
     )
 
+    # If the dataset is ready, proceed with the training experiment.
     if dataset:
         print(f"Proceeding to run experiment with {len(dataset)} samples.")
         run_experiment(
@@ -136,4 +141,4 @@ if __name__ == '__main__':
             trained_models_base_dir=args.trained_models_base_dir
         )
     else:
-        print(f"Could not load or generate dataset for {args.n_views} views, size {args.image_size} from {args.images_dir}. Exiting.")
+        print(f"Could not load or generate dataset. Exiting.")
