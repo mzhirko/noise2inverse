@@ -27,8 +27,10 @@ Download CT dataset:
 python download_dataset.py
 ```
 This downloads the Large COVID-19 CT Slice Dataset and creates `./CT_dataset/` with processed images.
+
 In case of insufficient disk quota, download the dataset in https://www.kaggle.com/datasets/maedemaftouni/large-covid19-ct-slice-dataset/data. Unzip in the same directory and rename the folder to dataset/
 
+After that, run the commands again.
 ## Running Experiments
 
 ### Phantom Data Experiments
@@ -92,8 +94,10 @@ python experiment_CT.py -m UNet -v 256 --image_size 256
 python experiment_CT.py -m UNet -v 512 --image_size 256
 python experiment_CT.py -m UNet -v 1024 --image_size 256
 
-python evaluate.py -m DnCNN -p
 python evaluate.py -m DnCNN
+python evaluate.py -m DnCNN -p
+python evaluate.py -m UNet
+python evaluate.py -m UNet -p
 
 python cross_view.py
 python cross_view.py -p
