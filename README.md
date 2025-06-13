@@ -5,10 +5,20 @@ Deep learning experiments for CT image reconstruction using DnCNN and UNet archi
 ## Setup
 
 ### Installation
+
+#### Create Environment
 ```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+conda create -n cito python=3.9
+conda activate cito
+```
+
+#### Install PyTorch
+Install a PyTorch version according to your OS and the instruction in https://pytorch.org/get-started/locally/
+
+#### Install Other Dependencies
+```bash
 pip install -r requirements.txt
+conda install -y -c astra-toolbox astra-toolbox
 ```
 
 ### Data Preparation
